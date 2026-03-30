@@ -44,120 +44,31 @@ Five ESP32-C3 microcontrollers, each mapped to a real mainframe subsystem:
 
 All subsystems share a single I2C bus (400kHz Fast Mode) and communicate via JSON-encoded messages. Each MCU has its own OLED display showing real-time subsystem state.
 
----
-
-## 🗺️ Planned Roadmap
-
-### Phase 1 — Foundation *(Week 1)*
-- Development environment setup (Arduino IDE + ESP32 board support)
-- Flash and verify all MCUs individually
-- Test OLED displays per subsystem
-- Establish basic I2C communication between two MCUs
-
-### Phase 2 — Protocol *(Week 2)*
-- Implement JSON message format using ArduinoJson
-- Connect all 5 MCUs to shared I2C bus
-- Test multi-MCU message broadcasting and addressing
-
-### Phase 3 — Individual Subsystems *(Weeks 3–4)*
-- Build Master Console: serial input + WiFi web dashboard
-- Build Database Controller: SD card read/write with JSON storage
-- Build Transaction Processor: validation logic and routing
-- Build Job Scheduler: priority queue implementation
-- Build I/O Controller: transaction generation and result handling
-- Test each subsystem independently before integration
-
-### Phase 4 — Integration *(Week 5)*
-- Connect all subsystems and run end-to-end transaction flow
-- Implement and test full banking scenarios (deposit, withdrawal, transfer)
-- Validate heartbeat and health monitoring across subsystems
-
-### Phase 5 — Advanced Features *(Week 6)*
-- Priority job scheduling with HIGH / MEDIUM / LOW queues
-- Atomic transfer transactions (all-or-nothing semantics)
-- Load testing (50 concurrent transactions)
-- Failure simulation (physical subsystem disconnection)
-- Logic analyzer debugging sessions on I2C bus traffic
+Each MCU runs two independent I2C buses:
+- **Private bus (GPIO3/GPIO10):** connects to its own OLED display
+- **Shared bus (GPIO8/GPIO9):** inter-MCU communication
 
 ---
 
-## 🧪 Test Scenarios
+## 🛠️ Hardware
 
-Six concrete scenarios drive development and validation:
+The project is built around five ESP32-C3 SuperMini microcontrollers — compact, USB-C capable boards with built-in WiFi and Bluetooth. Each MCU sits on its own breadboard alongside a 0.96" SSD1306 OLED display for real-time status output.
 
-1. **Simple Deposit** — Basic transaction flow end-to-end
-2. **Insufficient Funds** — Error propagation and rollback
-3. **Account Transfer** — Atomic multi-account operation
-4. **Priority Scheduling** — HIGH priority job preempting LOW priority queue
-5. **Load Test** — 50 rapid transactions, observe bottlenecks
-6. **Subsystem Failure** — Disconnect DB Controller, observe timeout and recovery
+Storage for the Database Controller subsystem is provided by a Micro SD card module connected via SPI. An RTC module (DS1307) on the Master Console provides accurate timestamps for transaction logs.
 
----
+A USB splitter cable distributes power to all five MCUs from a single bench power supply, keeping the wiring clean. An 8-channel 24MHz logic analyzer connects to the shared I2C bus for signal inspection and debugging with PulseView.
 
-## 🛒 Hardware
-
-| Component | Quantity | Purpose |
-|-----------|----------|---------|
-| ESP32-C3 SuperMini | 6 (1 spare) | Subsystem MCUs |
-| SSD1306 OLED 0.96" | 5 | Per-subsystem status display |
-| Micro SD Card Module (SPI) | 2 (1 spare) | Database Controller storage |
-| 64GB Micro SD Card | 1 | Account data persistence |
-| USB Logic Analyzer 8CH 24MHz | 1 | I2C bus debugging |
-| Breadboards (830pt × 2, 400pt × 2) | 4 | Prototyping platform |
-| Jumper wire kit | 1 | Connections |
-| USB-A to 6× USB-C splitter | 1 | Power distribution |
-
-**Existing equipment used:**
-- Wanptek WPS3010H bench power supply (30V/10A) — USB output powers all MCUs
-- Elegoo DS1307 RTC module — Timestamps on Master Console
-- Assorted LEDs and resistors (including 4.7kΩ for I2C pull-ups)
-
-**Total hardware cost:** ~$104 including international shipping
-
----
-
-## 📦 Repository Contents
-
-```
-/
-├── README.md                        # This file
-├── design/
-│   ├── mainframe_simulation_design.docx   # Full system design document
-│   └── wiring_schematic.html              # Interactive wiring schematic
-```
-
-Code will be added per subsystem as development progresses:
-
-```
-├── firmware/
-│   ├── master_console/
-│   ├── transaction_processor/
-│   ├── database_controller/
-│   ├── job_scheduler/
-│   └── io_controller/
-└── docs/
-    └── learnings.md                 # Notes and insights along the way
-```
-
----
-
-## 📍 Current Status
-
-> **⏳ Waiting for parts to arrive!**
-
-Hardware has been ordered and is on its way. In the meantime, the system design is complete, wiring schematics are finalized, and the development roadmap is ready to go.
-
-The excitement is real. Parts can't arrive fast enough. 🎉
+Prototyping is done on solderless breadboards with jumper wires. Pull-up resistors (4.7kΩ) are required on the shared I2C bus lines.
 
 ---
 
 ## 🛠️ Development Environment
 
 - **OS:** Fedora Linux
-- **IDE:** Arduino IDE with ESP32-C3 board support
+- **IDE:** VS Code with PlatformIO extension
 - **Language:** C++ (Arduino framework)
 - **Key Libraries:** Wire (I2C), ArduinoJson, Adafruit SSD1306, RTClib, SD
-- **Debugging:** HiBCTR 24MHz 8-Channel Logic Analyzer + PulseView
+- **Debugging:** 8-channel 24MHz Logic Analyzer + PulseView/Sigrok
 
 ---
 
@@ -176,4 +87,4 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ---
 
-*Built with curiosity, a soldering iron (not yet needed), and an unhealthy excitement about distributed systems.*
+*Built with curiosity, a soldering iron, and an unhealthy excitement about distributed systems.*
