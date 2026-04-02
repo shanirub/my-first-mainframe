@@ -4,6 +4,9 @@
         { "name": "MCU2 - Transaction Processor",   "path": "mcu2-transaction-processor" },
         { "name": "MCU3 - Database Controller",     "path": "mcu3-database-controller" },
         { "name": "MCU4 - Job Scheduler",           "path": "mcu4-job-scheduler" },
-        { "name": "MCU5 - IO Controller",           "path": "mcu5-io-controller" }
+        { "name": "MCU5 - IO Controller",           "path": "mcu5-io-controller" },
+        { "name": "Shared",           "path": "shared" },
+        { "name": ".",           "path": "." }
+
     ]
 }
