@@ -1,24 +1,11 @@
 // mcu2-transaction-processor/src/main.cpp
 #include <Arduino.h>
-#include <Wire.h>
 #include "config.h"
 #include "oled_display.h"
+#include "shared_bus.h"
 
-TwoWire sharedBus = TwoWire(0);
+SharedBus sharedBus;
 OledDisplay oled(OLED_SDA_PIN, OLED_SCL_PIN);
-
-void onReceive(int numBytes) {
-    char buf[32] = {0};
-    int i = 0;
-    while (sharedBus.available() && i < 31) {
-        buf[i++] = sharedBus.read();
-    }
-    Serial.print("[MCU2] Received ");
-    Serial.print(numBytes);
-    Serial.print(" bytes: ");
-    Serial.println(buf);
-    oled.showStatus("TRANSACTION", "PROCESSOR", "RX:", buf);
-}
 
 void setup() {
     Serial.begin(115200);
@@ -31,11 +18,16 @@ void setup() {
         Serial.println("[MCU2] OLED OK");
     }
 
-    sharedBus.begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN, 0);
-    sharedBus.onReceive(onReceive);
+    sharedBus.beginSlave(I2C_ADDRESS);
     Serial.println("[MCU2] Slave ready, listening on 0x09...");
 }
 
 void loop() {
-    delay(100);
+    char buf[32];
+    if (sharedBus.poll(buf, sizeof(buf))) {
+        Serial.print("[MCU2] Received: ");
+        Serial.println(buf);
+        oled.showStatus("TRANSACTION", "PROCESSOR", "RX:", buf);
+    }
+    delay(10);
 }

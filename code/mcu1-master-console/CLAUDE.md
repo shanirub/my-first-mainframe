@@ -9,12 +9,15 @@
 ## Current State
 - OLED working (confirmed): GPIO3=SDA, GPIO10=SCL via U8g2 software I2C
 - Shared bus I2C: GPIO8=SDA, GPIO9=SCL CONFIRMED WORKING
-- Both buses running simultaneously: CONFIRMED WORKING (Phase 1.5 complete)
-- main.cpp: OLED + I2C master active together
+- Both buses running simultaneously: CONFIRMED WORKING
+- SharedBus class in use: sharedBus.beginMaster(), sharedBus.send()
+- BusError return type used for all send() results
+- main.cpp: uses SharedBus + OledDisplay, no raw TwoWire or pin numbers
 - main_oled_display.cpp.old: pre-merge backup, preserved
+- Phase 1.5 COMPLETE
 
 ## Next
-- Extract shared bus init into SharedBus shared library (Phase 1.5 remaining)
+Phase 2 — JSON messaging protocol across all 5 MCUs
 
 ## Planned Features (later phases)
 - Serial console: accept commands via USB serial input

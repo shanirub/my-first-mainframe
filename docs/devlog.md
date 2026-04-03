@@ -2,6 +2,52 @@
 
 ---
 
+## Phase 1.5 — SharedBus Class: Encapsulation and ISR-Safe Receive
+*Goal: extract shared bus boilerplate into a shared library; fix ISR-unsafe OLED calls in onReceive*
+
+### What we built
+- `SharedBus` class in `shared/libs/shared_bus/` — encapsulates TwoWire(0) entirely
+- `beginMaster()` / `beginSlave(address)` replace raw TwoWire init in every main.cpp
+- `BusError send(target, message)` wraps the 3-step TwoWire dance with a typed error return
+- `poll(buf, len)` replaces the `onReceive` callback pattern — safe to call from `loop()`
+- No raw `TwoWire`, `Wire.h`, or pin numbers remain in any main.cpp
+
+### Design decisions
+
+**BusError enum over bool**
+`endTransmission()` returns 5 distinct codes. A bool collapses `NOT_FOUND`, `BUS_FAULT`,
+and `TIMEOUT` into a single failure, making diagnostics harder. `BusError` preserves the
+distinction so callers can log or display the specific failure reason.
+
+**poll() over onReceive callback**
+The original MCU #2 code called `oled.showStatus()` directly inside `onReceive`. That
+callback runs in interrupt context — calling U8g2 software I2C (bit-banging GPIOs) from
+inside an active I2C interrupt is a known deadlock/corruption risk on ESP32.
+The fix: `onReceive` ISR only reads raw bytes into an internal `_rxBuf` (no I2C, no heap,
+no blocking). `poll()` is called from `loop()` — safe for OLED updates, Serial, and
+anything else. The cost is a small polling delay (~10ms) which is acceptable for this
+use case.
+
+**Static _instance pointer**
+Arduino's `onReceive` requires a plain C function pointer — no lambdas, no member
+function pointers. A static `_instance` pointer lets the static ISR reach the live
+TwoWire and buffer. One SharedBus per MCU is the intended constraint.
+
+### Verified pass criteria
+- MCU #1 serial: `[MCU1] SEND OK — MCU2 acknowledged` ✅
+- MCU #2 serial: `[MCU2] Received: HELLO FROM MCU1` ✅
+- No raw TwoWire or pin numbers in either main.cpp ✅
+- shared_bus picked up automatically by PlatformIO LDF via lib_extra_dirs ✅
+
+### Key learnings
+- `endTransmission()` return codes map cleanly to typed errors — worth modelling explicitly
+- ISR callbacks on Arduino are not safe for I2C or any blocking operation; buffer-and-poll
+  is the standard workaround
+- Static singleton pattern is the only practical way to bridge C-style callbacks to C++ objects
+  in the Arduino framework
+
+---
+
 ## Phase 1.5 — Dual I2C Bus Fix: OLED + Shared Bus Simultaneously
 *Goal: run OLED display and inter-MCU shared bus at the same time on each MCU*
 

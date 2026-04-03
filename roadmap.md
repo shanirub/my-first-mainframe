@@ -18,8 +18,8 @@
 - [x] Replace TwoWire(1) OLED bus with SoftWire (ESP32-C3 has one I2C peripheral)
 - [x] Verify OLED + shared bus running simultaneously on MCU #1
 - [x] Verify OLED + shared bus running simultaneously on MCU #2
-- [ ] Extract SharedBus class from main.cpp into shared library
-- [ ] Update all MCU main.cpp files to use config.h pin constants (remove raw defines)
+- [x] Extract SharedBus class from main.cpp into shared library
+- [x] Update all MCU main.cpp files to use config.h pin constants (remove raw defines)
 
 ---
 

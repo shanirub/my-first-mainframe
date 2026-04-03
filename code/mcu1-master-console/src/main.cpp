@@ -1,9 +1,9 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include "config.h"
 #include "oled_display.h"
+#include "shared_bus.h"
 
-TwoWire sharedBus = TwoWire(0);
+SharedBus sharedBus;
 OledDisplay oled(OLED_SDA_PIN, OLED_SCL_PIN);
 
 void setup() {
@@ -17,23 +17,25 @@ void setup() {
         Serial.println("[MCU1] OLED OK");
     }
 
-    sharedBus.begin(SHARED_SDA_PIN, SHARED_SCL_PIN);
-    sharedBus.setClock(SHARED_I2C_FREQ);
+    sharedBus.beginMaster();
     Serial.println("[MCU1] Master ready, will send to 0x09...");
 }
 
 void loop() {
-    sharedBus.beginTransmission(ADDR_TRANSACTION_PROCESSOR);
-    sharedBus.write("HELLO FROM MCU1");
-    uint8_t result = sharedBus.endTransmission();
+    BusError err = sharedBus.send(ADDR_TRANSACTION_PROCESSOR, "HELLO FROM MCU1");
 
-    if (result == 0) {
+    if (err == BusError::OK) {
         Serial.println("[MCU1] SEND OK — MCU2 acknowledged");
         oled.showStatus("MASTER CONSOLE", "TX OK", "-> MCU2", "");
+    } else if (err == BusError::NOT_FOUND) {
+        Serial.println("[MCU1] SEND FAILED — MCU2 not found");
+        oled.showStatus("MASTER CONSOLE", "TX FAIL", "NOT FOUND", "");
+    } else if (err == BusError::TIMEOUT) {
+        Serial.println("[MCU1] SEND FAILED — timeout");
+        oled.showStatus("MASTER CONSOLE", "TX FAIL", "TIMEOUT", "");
     } else {
-        Serial.print("[MCU1] SEND FAILED — error code: ");
-        Serial.println(result);
-        oled.showStatus("MASTER CONSOLE", "TX FAIL", "-> MCU2", "");
+        Serial.println("[MCU1] SEND FAILED — bus fault");
+        oled.showStatus("MASTER CONSOLE", "TX FAIL", "BUS FAULT", "");
     }
 
     delay(2000);

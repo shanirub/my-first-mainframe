@@ -33,6 +33,7 @@ TwoWire(1) silently fails at runtime. OLED uses U8g2 SW_I2C to avoid the conflic
 code/
   shared/
     libs/oled_display/     ← shared OLED library (U8g2 SW_I2C wrapper)
+    libs/shared_bus/       ← shared I2C bus library (master + slave, poll() pattern)
     config/shared_config.h ← all pin definitions and MCU addresses
   mcu1-master-console/
   mcu2-transaction-processor/
@@ -70,16 +71,16 @@ Each MCU's platformio.ini must include:
 - Back up working main.cpp before replacing it for a new task
 
 ## Current Status
-Phase 1 COMPLETE. Phase 1.5 in progress. See roadmap.md.
+Phase 1 COMPLETE. Phase 1.5 COMPLETE. See roadmap.md.
 
 Phase 1.5 confirmed working:
 - OLED library migrated to U8g2 (software I2C) — Adafruit SSD1306 removed
+- SharedBus class extracted into shared library — TwoWire(0) fully encapsulated
 - MCU #1: OLED + shared bus master running simultaneously ✓
 - MCU #2: OLED + shared bus slave running simultaneously ✓
+- No raw pin numbers in any main.cpp file ✓
 
-Remaining Phase 1.5:
-- Extract SharedBus class into shared library
-- Remove raw pin defines from main.cpp files
+Next: Phase 2 — JSON messaging, connect all 5 MCUs to shared bus.
 
 ## PulseView Setup (Logic Analyzer)
 Physical connections for shared bus capture:
