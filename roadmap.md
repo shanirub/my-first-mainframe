@@ -9,7 +9,7 @@
 - [x] Test OLED displays per subsystem (MCU1 and MCU2 confirmed working)
 - [x] Shared OLED library created and working across all MCUs
 - [x] PlatformIO workspace configured for all MCUs simultaneously
-- [ ] Establish basic I2C communication between two MCUs
+- [X] Establish basic I2C communication between two MCUs
 
 ---
 
