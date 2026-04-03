@@ -8,14 +8,16 @@
 
 ## Current State
 - OLED working (confirmed): GPIO3=SDA, GPIO10=SCL
-- Shared bus I2C: GPIO8=SDA, GPIO9=SCL (not yet tested)
-- main.cpp: OLED working code, showing "MASTER CONSOLE" / "READY"
+- Shared bus I2C: GPIO8=SDA, GPIO9=SCL CONFIRMED WORKING
+- main_oled_backup.cpp: working OLED code, preserved
+- main.cpp: I2C master test code (Task 3 complete)
+- Unique USB port ID: usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B1:F1:74-if00
 
-## After Task 3
-- Will become I2C master on shared bus
-- Sends messages to MCU #2 (0x09) and other subsystems
+## Next
+Merge OLED code back in from main_oled_backup.cpp:
+- Keep TwoWire(0) for shared bus (GPIO8/9)
+- Add TwoWire(1) for OLED bus (GPIO3/10)
 - Replace raw #define SDA_PIN 3 with OLED_SDA_PIN from config.h
-- Add TwoWire sharedBus = TwoWire(0) for shared bus alongside existing OLED bus
 
 ## Planned Features (later phases)
 - Serial console: accept commands via USB serial input

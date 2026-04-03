@@ -64,13 +64,19 @@ Each MCU's platformio.ini must include:
 - Back up working main.cpp before replacing it for a new task
 
 ## Current Status
-See roadmap.md for phase progress.
-Task 3 COMPLETE: bidirectional I2C communication confirmed between MCU #1 
-and MCU #2 on shared bus (GPIO8/GPIO9). Serial monitor verified both sides.
+Phase 1 COMPLETE. See roadmap.md.
 
-Key fix discovered: TwoWire.begin() slave overload requires explicit frequency 
-argument — begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN, 0). 
-Without the 0, it silently hits wrong overload and ignores pin assignments.
+Task 3 confirmed working:
+- MCU #1 master transmits "HELLO FROM MCU1" to address 0x09 every 2 seconds
+- MCU #2 slave receives and prints to serial
+- PulseView decode confirmed: S | 09 | 48 45 4C 4C 4F 20 46 52 4F 4D 20 4D 43 55 31 | P
 
-Next: PulseView capture of live transmission, then merge OLED code back 
-into both MCUs (shared bus + private OLED bus running simultaneously).
+Next: Phase 2 — JSON messaging, connect all 5 MCUs to shared bus.
+Before that: merge OLED code back into MCU #1 and MCU #2 (both buses
+running simultaneously).
+
+## PulseView Setup (Logic Analyzer)
+Physical connections for shared bus capture:
+- D0 = SDA (GPIO8, blue wire)
+- D1 = SCL (GPIO9, orange wire)
+In PulseView I2C decoder: assign SCL→D1, SDA→D0 (opposite of channel defaults)
