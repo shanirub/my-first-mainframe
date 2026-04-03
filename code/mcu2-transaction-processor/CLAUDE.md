@@ -19,8 +19,11 @@ begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN, 0)
 The frequency argument (0) is mandatory — no default value in slave overload.
 Without it, pins are silently ignored and slave never responds.
 
-## After Task 3
-Merge main_oled_backup.cpp back in:
-- Keep TwoWire(0) for shared bus (GPIO8/9)
-- Add TwoWire(1) for OLED bus (GPIO3/10)  
-- Replace raw #define SDA_PIN 3 with OLED_SDA_PIN from config.h
+## Current State (updated)
+- OLED working (confirmed): GPIO3=SDA, GPIO10=SCL via U8g2 software I2C
+- Both buses running simultaneously: CONFIRMED WORKING (Phase 1.5 complete)
+- main.cpp: OLED + I2C slave active together
+- main_oled_backup.cpp.old: pre-merge backup, preserved
+
+## Next
+- Extract shared bus init into SharedBus shared library (Phase 1.5 remaining)

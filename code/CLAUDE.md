@@ -13,9 +13,12 @@ I2C bus. Built on Fedora Linux with VS Code + PlatformIO.
 - Soldering station: YOUYUE 8586
 
 ## I2C Bus Architecture — Per MCU
-Each MCU runs two independent I2C buses:
-- Bus 0 (shared inter-MCU): GPIO8=SDA, GPIO9=SCL, 400kHz
-- Bus 1 (private OLED):     GPIO3=SDA, GPIO10=SCL, 100kHz
+Each MCU runs two I2C buses:
+- Bus 0 (shared inter-MCU): GPIO8=SDA, GPIO9=SCL, 400kHz — hardware TwoWire(0)
+- OLED (private):           GPIO3=SDA, GPIO10=SCL, 100kHz — U8g2 software I2C (bit-bang)
+
+Note: ESP32-C3 has only one hardware I2C peripheral (SOC_I2C_NUM=1).
+TwoWire(1) silently fails at runtime. OLED uses U8g2 SW_I2C to avoid the conflict.
 
 ## MCU Addressing
 | MCU | Role                  | I2C Address |
@@ -29,7 +32,7 @@ Each MCU runs two independent I2C buses:
 ## Project Structure
 code/
   shared/
-    libs/oled_display/     ← shared OLED library (Adafruit SSD1306 wrapper)
+    libs/oled_display/     ← shared OLED library (U8g2 SW_I2C wrapper)
     config/shared_config.h ← all pin definitions and MCU addresses
   mcu1-master-console/
   mcu2-transaction-processor/
@@ -45,6 +48,9 @@ Each MCU has: platformio.ini, src/main.cpp, src/config.h
 ## Known Bugs / Confirmed Fixes
 - ESP32-C3 Wire.begin() bug: never use Wire directly for non-default pins.
   Always use TwoWire sharedBus = TwoWire(0) with explicit pin assignment.
+- ESP32-C3 has SOC_I2C_NUM=1: only one hardware I2C peripheral exists.
+  TwoWire(1).begin() returns ESP_ERR_INVALID_ARG and leaves txBuffer NULL —
+  no error is surfaced to Arduino code. Use U8g2 SW_I2C for the OLED bus.
 - board_build.mcu = esp32c3 is mandatory in every platformio.ini alongside
   board = esp32-c3-devkitm-1. Without it builds fail silently.
 - library.json is required in each shared library folder for PlatformIO
@@ -64,16 +70,16 @@ Each MCU's platformio.ini must include:
 - Back up working main.cpp before replacing it for a new task
 
 ## Current Status
-Phase 1 COMPLETE. See roadmap.md.
+Phase 1 COMPLETE. Phase 1.5 in progress. See roadmap.md.
 
-Task 3 confirmed working:
-- MCU #1 master transmits "HELLO FROM MCU1" to address 0x09 every 2 seconds
-- MCU #2 slave receives and prints to serial
-- PulseView decode confirmed: S | 09 | 48 45 4C 4C 4F 20 46 52 4F 4D 20 4D 43 55 31 | P
+Phase 1.5 confirmed working:
+- OLED library migrated to U8g2 (software I2C) — Adafruit SSD1306 removed
+- MCU #1: OLED + shared bus master running simultaneously ✓
+- MCU #2: OLED + shared bus slave running simultaneously ✓
 
-Next: Phase 2 — JSON messaging, connect all 5 MCUs to shared bus.
-Before that: merge OLED code back into MCU #1 and MCU #2 (both buses
-running simultaneously).
+Remaining Phase 1.5:
+- Extract SharedBus class into shared library
+- Remove raw pin defines from main.cpp files
 
 ## PulseView Setup (Logic Analyzer)
 Physical connections for shared bus capture:

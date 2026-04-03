@@ -7,17 +7,14 @@
 - monitor_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B1:F1:74-if00
 
 ## Current State
-- OLED working (confirmed): GPIO3=SDA, GPIO10=SCL
+- OLED working (confirmed): GPIO3=SDA, GPIO10=SCL via U8g2 software I2C
 - Shared bus I2C: GPIO8=SDA, GPIO9=SCL CONFIRMED WORKING
-- main_oled_backup.cpp: working OLED code, preserved
-- main.cpp: I2C master test code (Task 3 complete)
-- Unique USB port ID: usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B1:F1:74-if00
+- Both buses running simultaneously: CONFIRMED WORKING (Phase 1.5 complete)
+- main.cpp: OLED + I2C master active together
+- main_oled_display.cpp.old: pre-merge backup, preserved
 
 ## Next
-Merge OLED code back in from main_oled_backup.cpp:
-- Keep TwoWire(0) for shared bus (GPIO8/9)
-- Add TwoWire(1) for OLED bus (GPIO3/10)
-- Replace raw #define SDA_PIN 3 with OLED_SDA_PIN from config.h
+- Extract shared bus init into SharedBus shared library (Phase 1.5 remaining)
 
 ## Planned Features (later phases)
 - Serial console: accept commands via USB serial input

@@ -1,11 +1,9 @@
 #pragma once
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <U8g2lib.h>
 
-#define OLED_SCREEN_WIDTH 128
+#define OLED_SCREEN_WIDTH  128
 #define OLED_SCREEN_HEIGHT 64
-#define OLED_ADDRESS 0x3C
+#define OLED_ADDRESS       0x3C
 
 class OledDisplay {
 public:
@@ -20,8 +18,5 @@ public:
     void showError(const char* message);
 
 private:
-    TwoWire _bus;
-    Adafruit_SSD1306 _display;
-    uint8_t _sdaPin;
-    uint8_t _sclPin;
+    U8G2_SSD1306_128X64_NONAME_F_SW_I2C _display;
 };

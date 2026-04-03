@@ -1,23 +1,18 @@
 #include "oled_display.h"
 
+// U8g2 SW_I2C constructor arg order: (rotation, SCL, SDA, reset)
+// Note: SCL comes before SDA — opposite of Wire convention
 OledDisplay::OledDisplay(uint8_t sdaPin, uint8_t sclPin)
-    : _bus(0),
-      _display(OLED_SCREEN_WIDTH, OLED_SCREEN_HEIGHT, &_bus, -1),
-      _sdaPin(sdaPin),
-      _sclPin(sclPin) {}
+    : _display(U8G2_R0, sclPin, sdaPin, U8X8_PIN_NONE) {}
 
 bool OledDisplay::begin() {
-    _bus.begin(_sdaPin, _sclPin);
-    _bus.setClock(100000);
-
-    if (!_display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+    if (!_display.begin()) {
         Serial.println("[OLED] FAIL: display.begin() returned false");
         return false;
     }
-
     Serial.println("[OLED] PASS: initialized");
-    _display.clearDisplay();
-    _display.display();
+    _display.clearBuffer();
+    _display.sendBuffer();
     return true;
 }
 
@@ -27,25 +22,22 @@ void OledDisplay::showStatus(
     const char* line3,
     const char* line4
 ) {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    _display.setTextColor(SSD1306_WHITE);
-
-    _display.setCursor(0, 0);  _display.println(line1);
-    _display.setCursor(0, 16); _display.println(line2);
-    _display.setCursor(0, 32); _display.println(line3);
-    _display.setCursor(0, 48); _display.println(line4);
-
-    _display.display();
+    _display.clearBuffer();
+    _display.setFont(u8g2_font_6x10_tf);
+    // U8g2 y-coordinates are text baseline, not top-left.
+    // Font height is 10px; baselines at 10/26/42/58 match the
+    // original 4-line layout at y=0/16/32/48.
+    _display.drawStr(0, 10, line1);
+    _display.drawStr(0, 26, line2);
+    _display.drawStr(0, 42, line3);
+    _display.drawStr(0, 58, line4);
+    _display.sendBuffer();
 }
 
 void OledDisplay::showError(const char* message) {
-    _display.clearDisplay();
-    _display.setTextSize(1);
-    _display.setTextColor(SSD1306_WHITE);
-    _display.setCursor(0, 0);
-    _display.println("*** ERROR ***");
-    _display.setCursor(0, 16);
-    _display.println(message);
-    _display.display();
+    _display.clearBuffer();
+    _display.setFont(u8g2_font_6x10_tf);
+    _display.drawStr(0, 10, "*** ERROR ***");
+    _display.drawStr(0, 26, message);
+    _display.sendBuffer();
 }

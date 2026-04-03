@@ -2,6 +2,55 @@
 
 ---
 
+## Phase 1.5 — Dual I2C Bus Fix: OLED + Shared Bus Simultaneously
+*Goal: run OLED display and inter-MCU shared bus at the same time on each MCU*
+
+### What we built
+- Migrated OLED library from Adafruit SSD1306 (hardware I2C) to U8g2 (software I2C)
+- Both MCU #1 (master) and MCU #2 (slave) now run OLED and shared bus simultaneously
+- U8g2 bit-bangs I2C in software on GPIO3/GPIO10, leaving TwoWire(0) free for shared bus
+
+### What went wrong and how it was fixed
+
+**1. TwoWire(1) silently fails on ESP32-C3**
+Initial approach was to assign OLED to TwoWire(1) and shared bus to TwoWire(0).
+Both MCUs crashed at boot with repeated `[Wire.cpp:526] write(): NULL TX buffer pointer`.
+Root cause: ESP32-C3 has `SOC_I2C_NUM = 1` — only one hardware I2C peripheral.
+`TwoWire(1).begin()` calls `i2cInit(1, ...)` which returns `ESP_ERR_INVALID_ARG` since
+`1 >= SOC_I2C_NUM`. The buffer is never allocated. No error is surfaced to Arduino code.
+The comment in soc_caps.h even says "have 2 I2C" — the comment is wrong.
+
+**2. SoftWire not compatible with Adafruit SSD1306**
+SoftWire was the first candidate to replace TwoWire(1). Rejected because
+`Adafruit_SSD1306` takes a `TwoWire*` in its constructor — SoftWire doesn't
+inherit from TwoWire, so it can't be passed where `TwoWire*` is expected without
+modifying the Adafruit library.
+
+**3. U8g2 SW_I2C constructor argument order**
+U8g2 software I2C constructor takes `(rotation, SCL, SDA, reset)` — SCL before SDA,
+opposite of Wire convention. Passing them in Wire order (SDA, SCL) would silently
+communicate on the wrong pins.
+
+**4. ISR constraint on MCU #2**
+`onReceive` fires in interrupt context. Calling `oled.showStatus()` from inside it
+would trigger I2C writes during an active I2C interrupt — a known deadlock/corruption
+scenario on ESP32. OLED updates were kept in the receive handler in the current code
+and remain a known risk; to be addressed when SharedBus class is introduced.
+
+### Verified pass criteria
+- MCU #1 serial: `[OLED] PASS: initialized` + `[MCU1] SEND OK — MCU2 acknowledged` ✅
+- MCU #2 serial: `[OLED] PASS: initialized` + `[MCU2] Received 15 bytes: HELLO FROM MCU1` ✅
+- Both running simultaneously without conflict ✅
+
+### Key learnings
+- ESP32-C3 `SOC_I2C_NUM = 1`: only one hardware I2C peripheral, despite misleading comment
+- `TwoWire(1)` constructs silently but fails at `begin()` — no Arduino-level error
+- For multi-bus I2C on ESP32-C3: hardware bus for shared/critical path, U8g2 SW_I2C for display
+- Adafruit SSD1306 is not compatible with software I2C drop-ins — it requires `TwoWire*`
+- U8g2 y-coordinates are text baseline, not top-left corner
+
+---
+
 ## Task 3 — I2C Communication: MCU #1 (Master) → MCU #2 (Slave)
 *Goal: establish verified bidirectional I2C communication on shared bus (GPIO8/GPIO9)*
 
