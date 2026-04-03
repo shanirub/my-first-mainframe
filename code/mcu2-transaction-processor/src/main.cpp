@@ -1,3 +1,4 @@
+// mcu2-transaction-processor/src/main.cpp
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
@@ -18,7 +19,7 @@ void onReceive(int numBytes) {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    sharedBus.begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN);
+    sharedBus.begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN, 0);
     sharedBus.onReceive(onReceive);
     Serial.println("[MCU2] Slave ready, listening on 0x09...");
 }

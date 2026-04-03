@@ -65,6 +65,12 @@ Each MCU's platformio.ini must include:
 
 ## Current Status
 See roadmap.md for phase progress.
-Task 3 in progress: establishing I2C communication between MCU #1 and MCU #2
-on the shared bus (GPIO8/GPIO9). Serial monitor only — no OLEDs involved.
-MCU #2 slave code written, not yet flashed.
+Task 3 COMPLETE: bidirectional I2C communication confirmed between MCU #1 
+and MCU #2 on shared bus (GPIO8/GPIO9). Serial monitor verified both sides.
+
+Key fix discovered: TwoWire.begin() slave overload requires explicit frequency 
+argument — begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN, 0). 
+Without the 0, it silently hits wrong overload and ignores pin assignments.
+
+Next: PulseView capture of live transmission, then merge OLED code back 
+into both MCUs (shared bus + private OLED bus running simultaneously).

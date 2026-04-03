@@ -1,35 +1,28 @@
 #include <Arduino.h>
-#include "oled_display.h"
+#include <Wire.h>
+#include "config.h"
 
-#define SDA_PIN 3
-#define SCL_PIN 10
-
-OledDisplay oled(SDA_PIN, SCL_PIN);
+TwoWire sharedBus = TwoWire(0);
 
 void setup() {
     Serial.begin(115200);
-    delay(2000);
-    Serial.println("MCU1 Master Console starting...");
-
-    if (!oled.begin()) {
-        Serial.println("FAIL: OLED init failed");
-        while (true) {
-            Serial.println("[HEARTBEAT] stuck - OLED failed");
-            delay(3000);
-        }
-    }
-
-    oled.showStatus(
-        "MASTER CONSOLE",
-        "READY",
-        "Subsystems: 0",
-        "Last: none"
-    );
-
-    Serial.println("PASS: display showing");
+    delay(1000);
+    sharedBus.begin(SHARED_SDA_PIN, SHARED_SCL_PIN);
+    sharedBus.setClock(SHARED_I2C_FREQ);
+    Serial.println("[MCU1] Master ready, will send to 0x09...");
 }
 
 void loop() {
-    Serial.println("[HEARTBEAT] running");
-    delay(3000);
+    sharedBus.beginTransmission(ADDR_TRANSACTION_PROCESSOR);
+    sharedBus.write("HELLO FROM MCU1");
+    uint8_t result = sharedBus.endTransmission();
+
+    if (result == 0) {
+        Serial.println("[MCU1] SEND OK — MCU2 acknowledged");
+    } else {
+        Serial.print("[MCU1] SEND FAILED — error code: ");
+        Serial.println(result);
+    }
+
+    delay(2000);
 }

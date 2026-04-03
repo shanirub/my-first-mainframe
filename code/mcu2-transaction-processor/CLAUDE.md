@@ -3,20 +3,24 @@
 ## Identity
 - I2C address on shared bus: 0x09
 - Role: validates and routes banking transactions
+- upload_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
+- monitor_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
 
 ## Current State
 - OLED working (confirmed): GPIO3=SDA, GPIO10=SCL
-- Shared bus I2C: GPIO8=SDA, GPIO9=SCL (not yet tested)
-- main_oled_backup.cpp: working OLED code, preserved before Task 3
-- main.cpp: currently I2C slave test code (Task 3)
+- Shared bus I2C: GPIO8=SDA, GPIO9=SCL CONFIRMED WORKING
+- main_oled_backup.cpp: working OLED code, preserved
+- main.cpp: I2C slave test code (Task 3 complete)
+- Unique USB port ID: usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
 
-## Task 3 — Slave Code
-- Acts as I2C slave at 0x09 on shared bus
-- onReceive() prints received bytes to serial
-- No OLED active during this task
+## Critical Fix
+sharedBus.begin() for slave mode requires 4 arguments:
+begin(I2C_ADDRESS, SHARED_SDA_PIN, SHARED_SCL_PIN, 0)
+The frequency argument (0) is mandatory — no default value in slave overload.
+Without it, pins are silently ignored and slave never responds.
 
 ## After Task 3
-Restore OLED by merging main_oled_backup.cpp back in:
+Merge main_oled_backup.cpp back in:
 - Keep TwoWire(0) for shared bus (GPIO8/9)
-- Keep TwoWire(1) or existing OledDisplay for OLED (GPIO3/10)
+- Add TwoWire(1) for OLED bus (GPIO3/10)  
 - Replace raw #define SDA_PIN 3 with OLED_SDA_PIN from config.h

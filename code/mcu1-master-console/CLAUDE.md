@@ -3,6 +3,8 @@
 ## Identity
 - I2C address on shared bus: 0x08
 - Role: system coordinator, operator interface, command input
+- upload_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B1:F1:74-if00
+- monitor_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B1:F1:74-if00
 
 ## Current State
 - OLED working (confirmed): GPIO3=SDA, GPIO10=SCL
