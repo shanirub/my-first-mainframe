@@ -87,3 +87,10 @@ Physical connections for shared bus capture:
 - D0 = SDA (GPIO8, blue wire)
 - D1 = SCL (GPIO9, orange wire)
 In PulseView I2C decoder: assign SCL→D1, SDA→D0 (opposite of channel defaults)
+
+## Git Hooks
+A post-commit hook automatically syncs CLAUDE.md changes to Claude's memory.
+Hook location: .git/hooks/post-commit
+Script location: scripts/claude_memory_sync.py
+Trigger: only fires when CLAUDE.md files are modified in the commit.
+
