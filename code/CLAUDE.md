@@ -94,4 +94,3 @@ Hook location: .git/hooks/post-commit
 Script location: scripts/claude_memory_sync.py
 Trigger: only fires when CLAUDE.md files are modified in the commit.
 
-
