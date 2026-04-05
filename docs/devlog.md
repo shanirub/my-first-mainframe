@@ -165,3 +165,147 @@ connection, use a longer USB cable with slack.
 - docs/captures/task3_i2c_transmission_decoded.png
 - docs/captures/task3_pulseview_session.sr
 
+---
+
+---
+
+## Phase 2 Prep — Physical Layout Planning
+*Goal: plan final breadboard arrangement before soldering MCU #3, #4, #5*
+
+### What we decided
+
+T-shape layout on 30×30cm wood base:
+- Vertical long BB (spine): MCU #3 (top) + shared bus hub (bottom)
+- Horizontal long BB (base): MCU #4 (left) + MCU #5 (right)
+- Short BB left: MCU #1
+- Short BB right: MCU #2
+
+Hub at the T-junction gives approximately equal wire length to all five MCUs.
+All shared bus wires (SDA/SCL/GND) run directly from each MCU to hub rails.
+OLED wires stay local — they never reach the hub.
+
+Wire color convention established:
+- Orange = SDA (GPIO8)
+- White/grey = SCL (GPIO9)
+- Black = GND
+- Blue = OLED SDA (GPIO3, local only)
+- Light blue = OLED SCL (GPIO10, local only)
+
+### Wiring diagram
+- docs/diagrams/bb_full.fzz (Fritzing)
+- docs/captures/ — SVG layout diagrams
+
+### Physical fixing
+Double-sided foam tape or velcro strips recommended over hot glue — allows
+individual boards to be lifted for rework. Hot glue only after all wiring verified.
+
+---
+
+## Phase 2 Prep — System Design Documentation
+*Goal: write formal design documents before implementing Phase 2*
+
+### What we wrote
+
+**docs/requirements.md**
+Formal functional (FR-01–FR-12) and non-functional (NFR-01–NFR-06) requirements.
+Key decisions:
+- FR-05 (crash recovery) and FR-10 (atomic transfer) deferred to Phase 5
+- NFR-02 reworded: "50 sequential transactions without dropping any" —
+  I2C is physically sequential, "concurrent" was misleading
+- FR-11: MCU #5 web console for submitting transactions
+- FR-12: BALANCE enquiry as a first-class transaction type
+
+**docs/design/system_design.md**
+Full architecture document covering subsystem map, communication topology,
+data flows for all transaction types, data model, error handling, and open questions.
+
+**docs/design/message_protocol.md**
+Complete JSON message format specification for all 11 message types:
+JOB_SUBMIT, JOB_DISPATCH, JOB_COMPLETE, JOB_RESULT, DB_READ, DB_READ_RESULT,
+DB_WRITE, DB_WRITE_ACK, HEARTBEAT, HEARTBEAT_ACK, ERROR.
+
+**docs/decisions/ — Architecture Decision Records**
+- ADR-001: I2C as inter-MCU protocol
+- ADR-002: U8g2 software I2C for OLED
+- ADR-003: SharedBus poll() pattern
+- ADR-004: I2C buffer expanded to 256 bytes
+- ADR-005: JSON message format with ArduinoJson
+- ADR-006: Balance display on both OLED and web console
+
+**docs/captures/ — Sequence diagrams**
+SVG sequence diagrams for all four flows:
+- Deposit transaction (happy path)
+- Insufficient funds (rejection path)
+- Balance enquiry (read-only path)
+- Heartbeat with subsystem failure detection
+
+### Key design decisions
+
+**Money as integer cents**
+All monetary values stored and transmitted as uint32_t cents.
+$100.00 = 10000. Float arithmetic is never used for money — a standard rule
+in financial software. Formatting to $x.xx is done at display layer only.
+
+**Job ID as composite: (senderAddr << 8) | sequenceNum**
+UUID rejected — 36 chars consumes 14% of 256 byte message budget for no benefit
+since MCU #5 is the only job source (no collision possible). Composite uint16_t
+gives uniqueness across MCUs if multiple sources are added later, costs 2 bytes.
+
+**BALANCE as a txnType, not a special case**
+Balance enquiry follows the same job flow as DEPOSIT/WITHDRAW but skips DB_WRITE.
+Priority LOW. Result returned in JOB_COMPLETE payload and displayed on both
+MCU #5 OLED and web console (ADR-006).
+
+**Job lifecycle: QUEUED → DISPATCHED → COMPLETE/FAILED**
+MCU #4 tracks job state explicitly. JOB_COMPLETE from MCU #2 carries jobId so
+MCU #4 can match and remove the correct queue entry. Timeout + retry once before
+marking FAILED and alerting MCU #1.
+
+**Dual-file storage on MCU #3**
+Two separate SD card files:
+- accounts.json — current balances (written on every transaction)
+- transactions.log — append-only audit log (written first, before accounts update)
+Write-ahead log pattern: log entry written before balance update. On boot,
+MCU #3 can detect and replay incomplete transactions. (Phase 5 feature.)
+
+### Open questions (recorded in system_design.md)
+- MCU #5 web console design — HTML form structure
+- WiFi + I2C simultaneous stability on ESP32-C3 (risk: timing interference)
+- Runtime account creation via MCU #1 serial console (Phase 3)
+- Maximum job queue depth before MCU #4 rejects new submissions
+- Two-phase commit design for TRANSFER (Phase 5)
+
+---
+
+## Phase 2 Prep — Tooling: Git Hook for CLAUDE.md Memory Sync
+*Goal: automatically extract and sync key facts when CLAUDE.md files change*
+
+### What we built
+- `scripts/claude_memory_sync.py` — post-commit hook
+- Triggers only when CLAUDE.md files are modified in the commit
+- Calls Claude API to summarize changed sections into memory-sized facts
+- Attempts to write facts to Anthropic memory API
+
+### What worked
+- Change detection: correctly identifies modified CLAUDE.md files via git diff
+- Summarization: Claude API call correctly extracts key facts from diffs
+- Credits issue resolved: Anthropic API requires prepaid credits even with valid key
+
+### What didn't work
+- Memory write API: `memory-2025-01-01` beta header is invalid
+- Correct header is `context-management-2025-06-27` but the memory tool
+  uses a tool-call pattern (not a simple write endpoint) — more complex than
+  a one-liner fix
+- Memory write step currently fails silently after summarization succeeds
+
+### Current state
+Hook fires and summarizes correctly. Memory write is disabled pending a
+proper implementation of the context-management tool-call pattern.
+CLAUDE.md files in git remain the primary context source for Claude Code.
+
+### Key learnings
+- Anthropic memory API is tool-based (agent makes tool calls, app handles them locally)
+  not a simple REST write endpoint
+- `lib_extra_dirs` in PlatformIO only finds libraries with library.json —
+  plain header files need `-I path` in build_flags instead
+
