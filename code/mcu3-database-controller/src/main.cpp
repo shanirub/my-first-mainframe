@@ -19,7 +19,7 @@ void setup() {
     }
 
     sharedBus.beginSlave(I2C_ADDRESS);
-    Serial.println("[MCU3] Slave ready, listening on 0x0A...");
+    Serial.println("[MCU3] Slave ready, listening on 0x0A (DATABASE CONTROLLER)...");
 }
 
 void loop() {

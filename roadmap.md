@@ -25,9 +25,12 @@
 
 ## Phase 2 — Protocol *(Week 2)*
 
-- [ ] Implement JSON message format using ArduinoJson
-- [ ] Connect all 5 MCUs to shared I2C bus
-- [ ] Test multi-MCU message broadcasting and addressing
+- [X] Implement JSON message format using ArduinoJson
+- [X] Connect all 5 MCUs to shared I2C bus
+- [X] Test multi-MCU message broadcasting and addressing
+
+> Note: tested as sequential pairs (MCU #1 ↔ each slave individually).
+> Full 5-MCU simultaneous bus test pending — see Phase 3 prerequisites.
 
 ---
 

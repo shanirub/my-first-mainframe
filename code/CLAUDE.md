@@ -71,16 +71,19 @@ Each MCU's platformio.ini must include:
 - Back up working main.cpp before replacing it for a new task
 
 ## Current Status
-Phase 1 COMPLETE. Phase 1.5 COMPLETE. See roadmap.md.
+Phase 2 COMPLETE. See roadmap.md.
 
-Phase 1.5 confirmed working:
-- OLED library migrated to U8g2 (software I2C) — Adafruit SSD1306 removed
-- SharedBus class extracted into shared library — TwoWire(0) fully encapsulated
-- MCU #1: OLED + shared bus master running simultaneously ✓
-- MCU #2: OLED + shared bus slave running simultaneously ✓
-- No raw pin numbers in any main.cpp file ✓
+MCU #1 verified communicating with each of MCU #2, #3, #4, #5 individually
+(sequential pair tests). Full 5-MCU simultaneous bus test not yet done —
+this is the first task of Phase 3 before subsystem logic is implemented.
 
-Next: Phase 2 — JSON messaging, connect all 5 MCUs to shared bus.
+Shared libraries complete and verified:
+- shared/libs/oled_display       — U8g2 software I2C OLED wrapper
+- shared/libs/shared_bus         — I2C bus abstraction, poll() pattern
+- shared/libs/message_protocol   — JSON envelope, validation, constants
+
+Next: Phase 3 — connect all 5 to hub simultaneously, verify bus,
+then implement individual subsystem logic.
 
 ## PulseView Setup (Logic Analyzer)
 Physical connections for shared bus capture:

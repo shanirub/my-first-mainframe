@@ -115,7 +115,7 @@ JsonDocument MessageProtocol::createEnvelope(uint8_t from, uint8_t to, uint8_t t
     doc[Field::FROM]    = from;
     doc[Field::TO]      = to;
     doc[Field::TYPE]    = type;
-    doc.createNestedObject(Field::PAYLOAD);
+    doc[Field::PAYLOAD].to<JsonObject>(); // v7: replaces deprecated createNestedObject()
 
     return doc;
 }

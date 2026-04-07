@@ -18,17 +18,17 @@ void setup() {
     }
 
     sharedBus.beginMaster();
-    Serial.println("[MCU1] Master ready, will send to 0x09...");
+    Serial.println("[MCU1] Master ready, will send to 0x0C (MCU5)...");
 }
 
 void loop() {
-    BusError err = sharedBus.send(ADDR_TRANSACTION_PROCESSOR, "HELLO FROM MCU1");
+    BusError err = sharedBus.send(ADDR_IO_CONTROLLER, "HELLO FROM MCU1");
 
     if (err == BusError::OK) {
-        Serial.println("[MCU1] SEND OK — MCU2 acknowledged");
-        oled.showStatus("MASTER CONSOLE", "TX OK", "-> MCU2", "");
+        Serial.println("[MCU1] SEND OK — MCU5 acknowledged");
+        oled.showStatus("MASTER CONSOLE", "TX OK", "-> MCU5", "");
     } else if (err == BusError::NOT_FOUND) {
-        Serial.println("[MCU1] SEND FAILED — MCU2 not found");
+        Serial.println("[MCU1] SEND FAILED — MCU5 not found");
         oled.showStatus("MASTER CONSOLE", "TX FAIL", "NOT FOUND", "");
     } else if (err == BusError::TIMEOUT) {
         Serial.println("[MCU1] SEND FAILED — timeout");

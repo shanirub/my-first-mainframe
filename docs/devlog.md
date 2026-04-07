@@ -309,3 +309,70 @@ CLAUDE.md files in git remain the primary context source for Claude Code.
 - `lib_extra_dirs` in PlatformIO only finds libraries with library.json —
   plain header files need `-I path` in build_flags instead
 
+---
+
+## Phase 2 — Full 5-MCU Shared Bus + Message Protocol
+*Goal: all five MCUs communicating over shared I2C bus with structured JSON messages*
+
+### What we built
+- MessageProtocol shared library: `shared/libs/message_protocol/`
+  - UUID v4 job IDs via ESP32 hardware RNG (`esp_random()`)
+  - Short wire-format keys (`"ac"`, `"am"`, `"tp"`) to save I2C budget
+  - Integer codes for MsgType, TxnType, Status, Priority — uint8_t on wire
+  - Runtime schema validation — strict, rejects on any missing field
+  - Debug name helpers (`msgTypeName`, `statusName` etc.) for serial output
+  - `API_REFERENCE.md` documents every method, field, and constant
+- All 5 MCUs wired to shared bus hub on vertical long BB
+- MCU #1 verified communicating with each slave individually (sequential pair tests)
+
+### Key design decisions
+
+**UUID v4 for jobId**
+Composite ID (senderAddr << 8 | seq) rejected in favour of UUID v4.
+Reason: 64GB SD card means billions of transactions in the log over project
+lifetime. uint16_t wraps at 65,535. UUID v4 via esp_random() costs 36 bytes
+on the wire but short field keys freed that budget entirely.
+
+**Integer codes for message types and status**
+MsgType, TxnType, Status, Priority are all uint8_t on the wire.
+Saves ~8 bytes per message vs full strings. Constants remain human-readable
+in code (MsgType::JOB_SUBMIT) — debug name helpers convert back to strings
+for serial output only. Never use name helper return values in logic.
+
+**Short field name keys**
+Field names shortened ("msgId"→"mid", "account"→"ac" etc.).
+Freed ~35 bytes per message — enough to accommodate 36-byte UUID job IDs
+with headroom remaining in the 256-byte I2C buffer.
+
+**ArduinoJson v7 API fix**
+`createNestedObject()` deprecated in v7.
+Replacement: `doc[Field::PAYLOAD].to<JsonObject>()`
+Caught by VSCode Claude during integration review.
+
+**Money as integer cents**
+All `amount`, `balance`, `newBalance` fields are uint32_t cents.
+$100.00 = 10000. Float arithmetic never used for money.
+Formatting to $x.xx done at display layer only.
+
+### Verified pass criteria
+- MCU #1 → MCU #2: send + ACK confirmed ✅
+- MCU #1 → MCU #3: send + ACK confirmed ✅
+- MCU #1 → MCU #4: send + ACK confirmed ✅
+- MCU #1 → MCU #5: send + ACK confirmed ✅
+- All tested as sequential pairs — full 5-MCU simultaneous bus test pending ⏳
+- All 5 OLEDs active during respective pair tests ✅
+
+### Physical setup complete
+- T-shape layout on 30×30cm wood base
+- Vertical long BB (spine): MCU #3 (top) + shared bus hub (bottom)
+- Horizontal long BB (base): MCU #4 (left) + MCU #5 (right)
+- Short BB left: MCU #1 · Short BB right: MCU #2
+- Each MCU's 3.3V and GND pins connected to breadboard + and - rails
+- Two 5kΩ pull-ups on hub: one on SDA line, one on SCL line
+- Logic analyzer probes on hub for PulseView verification
+
+### Next step (Phase 3 prerequisite)
+Connect all 5 MCUs to hub simultaneously and run full bus test before
+implementing any subsystem logic. This is a different test from pair testing —
+verifies signal quality, pull-up strength, and bus arbitration with all
+devices present.
