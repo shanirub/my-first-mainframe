@@ -376,3 +376,69 @@ Connect all 5 MCUs to hub simultaneously and run full bus test before
 implementing any subsystem logic. This is a different test from pair testing —
 verifies signal quality, pull-up strength, and bus arbitration with all
 devices present.
+
+---
+
+## Phase 2.5 — Architecture Pivot: FreeRTOS
+*Goal: identify why Arduino loop() is insufficient and plan FreeRTOS migration*
+
+### What we discovered
+
+Full 5-MCU heartbeat test revealed two separate problems:
+
+**1. Slaves cannot send — Bus is in Slave Mode**
+MCU #2 correctly received HEARTBEAT from MCU #1 but sendAck() failed:
+`[Wire.cpp:411] beginTransmission(): Bus is in Slave Mode`
+Root cause: TwoWire on ESP32-C3 is master OR slave per boot. Once beginSlave()
+is called, beginTransmission() is rejected by the driver. This is not a bug —
+it is the intended Wire API behaviour.
+
+**2. Truncated messages — IncompleteInput**
+MCU #4 received messages but MessageProtocol::parse() reported IncompleteInput.
+Root cause: SharedBus _rxBuf was 32 bytes — smaller than HEARTBEAT messages.
+Fix: increase _rxBuf to 256 bytes (matching I2C_BUFFER_LENGTH build flag).
+
+**3. I2C_BUFFER_LENGTH=256 missing from some platformio.ini files**
+Not all MCUs had the build flag. Added to all five.
+
+### Why this matters architecturally
+
+The slave-cannot-send constraint means MCU #4 (JES) cannot talk directly to
+MCU #3 (DASD) unless it switches to master mode. In Arduino loop() this is
+fragile — there is no safe window to reconfigure because the slave must listen
+continuously. In FreeRTOS, a dedicated sender task can acquire a mutex, switch
+to master, send, switch back, release mutex — safely, because the listener task
+continues running independently.
+
+### Decision
+
+Adopt FreeRTOS tasks for all MCUs. See ADR-007 for full reasoning.
+
+The pivot is not a failure of Phase 1–2. Those phases confirmed the hardware
+works, validated the shared libraries, and revealed exactly why the constraint
+exists. You cannot know FreeRTOS is the right choice without first hitting the
+multi-master wall. The foundation built in Phases 1–2 is unchanged and reused.
+
+### What stays the same
+- All 5 MCU roles, addresses, and physical layout
+- OledDisplay, SharedBus (to be extended), MessageProtocol libraries
+- shared_config.h, per-MCU config.h, platformio.ini structure
+- All ADRs 001–006 remain valid
+
+### What changes
+- SharedBus: add mutex, runtime mode switching (beginMaster/beginSlave at any time)
+- Each MCU main.cpp: loop() replaced by FreeRTOS task creation
+- Communication: any MCU can initiate — MCU #1 is monitor/logger, not proxy
+
+### Verified so far
+- MCU #1 sends HEARTBEAT to all 4 slaves simultaneously ✅
+- MCU #3 (0x0A) and MCU #4 (0x0B) receive correctly ✅
+- MCU #2 (0x09) receives but cannot ACK — Bus is in Slave Mode ✅ (confirms constraint)
+- MCU #5 (0x0C) wiring issue — not yet receiving (to be resolved)
+- _rxBuf[256] fix resolves IncompleteInput on MCU #4 ✅
+
+### Next steps
+1. Validate FreeRTOS multi-master I2C proof of concept (2 MCUs)
+2. Redesign SharedBus for task-safe operation
+3. Redesign each MCU as FreeRTOS tasks
+4. Full 5-MCU simultaneous bus test with new architecture
