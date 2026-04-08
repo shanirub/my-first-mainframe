@@ -151,11 +151,11 @@ JsonDocument MessageProtocol::parse(const char* buf) {
 // Checks that every field in the null-terminated fields[] list exists in obj.
 // ─────────────────────────────────────────────────────────────────────────────
 ValidationResult MessageProtocol::_validateFields(
-    const JsonObject& obj,
-    const char** fields
+    const JsonObjectConst& obj,
+    const char* const* fields
 ) {
     for (int i = 0; fields[i] != nullptr; i++) {
-        if (!obj.containsKey(fields[i])) {
+        if (!obj[fields[i]].is<JsonVariantConst>() || obj[fields[i]].isNull()) {
             ValidationResult r;
             r.valid     = false;
             r.errorCode = Status::SCHEMA_ERROR;
@@ -163,7 +163,11 @@ ValidationResult MessageProtocol::_validateFields(
             return r;
         }
     }
-    return { true, Status::OK, "" };
+    ValidationResult r;
+    r.valid     = true;
+    r.errorCode = Status::OK;
+    r.detail[0] = '\0';
+    return r;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +177,7 @@ ValidationResult MessageProtocol::validate(const JsonDocument& doc) {
     ValidationResult r;
 
     // 1. Check envelope fields
-    JsonObject root = doc.as<JsonObject>();
+    JsonObjectConst root = doc.as<JsonObjectConst>();
     r = _validateFields(root, _envelopeFields);
     if (!r.valid) return r;
 
@@ -197,7 +201,7 @@ ValidationResult MessageProtocol::validate(const JsonDocument& doc) {
     }
 
     // 4. Check payload fields
-    JsonObject payload = doc[Field::PAYLOAD].as<JsonObject>();
+    JsonObjectConst payload = doc[Field::PAYLOAD].as<JsonObjectConst>();
     return _validateFields(payload, schema->requiredFields);
 }
 
@@ -250,9 +254,9 @@ const char* MessageProtocol::txnTypeName(uint8_t txnType) {
 
 const char* MessageProtocol::priorityName(uint8_t priority) {
     switch (priority) {
-        case Priority::HIGH:   return "HIGH";
+        case Priority::HI:     return "HIGH";
         case Priority::MEDIUM: return "MEDIUM";
-        case Priority::LOW:    return "LOW";
+        case Priority::LO:     return "LOW";
         default:               return "UNKNOWN";
     }
 }

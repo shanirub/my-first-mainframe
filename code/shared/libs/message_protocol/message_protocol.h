@@ -78,9 +78,9 @@ namespace Status {
 // Priority — job priority levels (uint8_t)
 // ─────────────────────────────────────────────────────────────────────────────
 namespace Priority {
-    constexpr uint8_t HIGH   = 0;
+    constexpr uint8_t HI     = 0;
     constexpr uint8_t MEDIUM = 1;
-    constexpr uint8_t LOW    = 2;
+    constexpr uint8_t LO     = 2;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ private:
     static const char*         _envelopeFields[];
 
     static ValidationResult _validateFields(
-        const JsonObject& obj,
-        const char** fields
+        const JsonObjectConst& obj,
+        const char* const* fields
     );
 };

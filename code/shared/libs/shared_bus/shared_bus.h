@@ -13,7 +13,7 @@ public:
 
 private:
     TwoWire _bus;
-    char _rxBuf[32];
+    char _rxBuf[256];
     volatile int _rxLen;
     volatile bool _rxReady;
 
