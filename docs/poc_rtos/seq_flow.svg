@@ -1,0 +1,153 @@
+<svg width="100%" viewBox="0 0 680 1020" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- MCU boundary labels -->
+<text font-family="sans-serif" font-size="12" x="174" y="46" text-anchor="middle" fill="#5F5E5A">MCU #1</text>
+<text font-family="sans-serif" font-size="12" x="514" y="46" text-anchor="middle" fill="#5F5E5A">MCU #2</text>
+<line x1="344" y1="52" x2="344" y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="6 3"/>
+
+<!-- Column headers -->
+<rect x="30"  y="56" width="96" height="30" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="78"  y="71" text-anchor="middle" dominant-baseline="central" fill="#3C3489">Sender A</text>
+<rect x="138" y="56" width="96" height="30" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="186" y="71" text-anchor="middle" dominant-baseline="central" fill="#3C3489">Sender B</text>
+<rect x="246" y="56" width="96" height="30" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="294" y="71" text-anchor="middle" dominant-baseline="central" fill="#3C3489">Receiver</text>
+<rect x="354" y="56" width="96" height="30" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="402" y="71" text-anchor="middle" dominant-baseline="central" fill="#085041">Receiver</text>
+<rect x="462" y="56" width="96" height="30" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="510" y="71" text-anchor="middle" dominant-baseline="central" fill="#085041">Logic</text>
+<rect x="570" y="56" width="96" height="30" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="618" y="71" text-anchor="middle" dominant-baseline="central" fill="#085041">OLED</text>
+
+<!-- Lifelines -->
+<line x1="78"  y1="86" x2="78"  y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+<line x1="186" y1="86" x2="186" y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+<line x1="294" y1="86" x2="294" y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+<line x1="402" y1="86" x2="402" y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+<line x1="510" y1="86" x2="510" y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+<line x1="618" y1="86" x2="618" y2="990" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="4 3"/>
+
+<!-- Sender A wakes -->
+<text font-family="sans-serif" font-size="12" x="78" y="118" text-anchor="middle" fill="#5F5E5A">wakes (2s timer)</text>
+
+<!-- Sender A take mutex -->
+<rect x="54" y="136" width="48" height="24" rx="4" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="78" y="148" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">take mutex</text>
+
+<!-- Sender B blocked -->
+<text font-family="sans-serif" font-size="12" x="186" y="176" text-anchor="middle" fill="#5F5E5A">blocked — mutex busy</text>
+<rect x="162" y="188" width="48" height="160" rx="4" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="3 2"/>
+<text font-family="sans-serif" font-size="12" x="186" y="272" text-anchor="middle" fill="#888780">waiting</text>
+
+<!-- Sender A master mode -->
+<text font-family="sans-serif" font-size="12" x="78" y="200" text-anchor="middle" fill="#5F5E5A">→ master mode</text>
+
+<!-- I2C: HEARTBEAT from A -->
+<line x1="78" y1="222" x2="402" y2="222" stroke="#2C2C2A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="240" y="216" text-anchor="middle" fill="#5F5E5A">HEARTBEAT over I2C wire</text>
+
+<!-- MCU2 ISR -->
+<text font-family="sans-serif" font-size="12" x="402" y="248" text-anchor="middle" fill="#5F5E5A">ISR fires</text>
+<text font-family="sans-serif" font-size="12" x="402" y="268" text-anchor="middle" fill="#5F5E5A">fills _rxBuf</text>
+<text font-family="sans-serif" font-size="12" x="402" y="288" text-anchor="middle" fill="#5F5E5A">xSemaphoreGiveFromISR</text>
+
+<!-- Sender A slave mode + give mutex -->
+<text font-family="sans-serif" font-size="12" x="78" y="318" text-anchor="middle" fill="#5F5E5A">→ slave mode</text>
+<rect x="54" y="330" width="48" height="24" rx="4" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="78" y="342" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">give mutex</text>
+
+<!-- Sender B unblocks + take mutex -->
+<text font-family="sans-serif" font-size="12" x="186" y="368" text-anchor="middle" fill="#5F5E5A">unblocks</text>
+<rect x="162" y="378" width="48" height="24" rx="4" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="186" y="390" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">take mutex</text>
+
+<!-- MCU2 Receiver wakes + queue send -->
+<text font-family="sans-serif" font-size="12" x="402" y="418" text-anchor="middle" fill="#5F5E5A">wakes on semaphore</text>
+<line x1="402" y1="432" x2="510" y2="432" stroke="#888780" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="456" y="426" text-anchor="middle" fill="#5F5E5A">xQueueSend</text>
+
+<!-- Sender B master mode -->
+<text font-family="sans-serif" font-size="12" x="186" y="460" text-anchor="middle" fill="#5F5E5A">→ master mode</text>
+
+<!-- I2C: HEARTBEAT from B -->
+<line x1="186" y1="478" x2="402" y2="478" stroke="#2C2C2A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="294" y="472" text-anchor="middle" fill="#5F5E5A">HEARTBEAT over I2C wire</text>
+
+<!-- MCU2 Logic drains queue -->
+<text font-family="sans-serif" font-size="12" x="510" y="502" text-anchor="middle" fill="#5F5E5A">xQueueReceive</text>
+<text font-family="sans-serif" font-size="12" x="510" y="522" text-anchor="middle" fill="#5F5E5A">parse + validate</text>
+
+<!-- MCU2 ISR 2nd heartbeat -->
+<text font-family="sans-serif" font-size="12" x="402" y="508" text-anchor="middle" fill="#5F5E5A">ISR fires</text>
+<text font-family="sans-serif" font-size="12" x="402" y="526" text-anchor="middle" fill="#5F5E5A">xSemaphoreGiveFromISR</text>
+
+<!-- MCU2 Logic take mutex -->
+<rect x="486" y="538" width="48" height="24" rx="4" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="510" y="550" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">take mutex</text>
+
+<!-- Sender B slave + give mutex -->
+<text font-family="sans-serif" font-size="12" x="186" y="576" text-anchor="middle" fill="#5F5E5A">→ slave mode</text>
+<rect x="162" y="586" width="48" height="24" rx="4" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="186" y="598" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">give mutex</text>
+
+<!-- MCU2 Logic master mode -->
+<text font-family="sans-serif" font-size="12" x="510" y="580" text-anchor="middle" fill="#5F5E5A">→ master mode</text>
+
+<!-- I2C: HEARTBEAT_ACK back to MCU1 -->
+<line x1="510" y1="602" x2="294" y2="602" stroke="#2C2C2A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="402" y="596" text-anchor="middle" fill="#5F5E5A">HEARTBEAT_ACK over I2C wire</text>
+
+<!-- MCU2 Logic slave + give mutex -->
+<text font-family="sans-serif" font-size="12" x="510" y="626" text-anchor="middle" fill="#5F5E5A">→ slave mode</text>
+<rect x="486" y="634" width="48" height="24" rx="4" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="510" y="646" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">give mutex</text>
+
+<!-- MCU2 OLED -->
+<text font-family="sans-serif" font-size="12" x="618" y="664" text-anchor="middle" fill="#5F5E5A">reads state</text>
+<text font-family="sans-serif" font-size="12" x="618" y="682" text-anchor="middle" fill="#5F5E5A">updates display</text>
+
+<!-- MCU1 Receiver ISR for ACK -->
+<text font-family="sans-serif" font-size="12" x="294" y="630" text-anchor="middle" fill="#5F5E5A">ISR fires</text>
+<text font-family="sans-serif" font-size="12" x="294" y="648" text-anchor="middle" fill="#5F5E5A">xSemaphoreGiveFromISR</text>
+<text font-family="sans-serif" font-size="12" x="294" y="668" text-anchor="middle" fill="#5F5E5A">wakes on semaphore</text>
+
+<!-- MCU1 Receiver → queue -->
+<line x1="294" y1="682" x2="78" y2="682" stroke="#888780" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="186" y="676" text-anchor="middle" fill="#5F5E5A">xQueueSend (ACK)</text>
+
+<!-- MCU1 logic drains queue -->
+<text font-family="sans-serif" font-size="12" x="78" y="704" text-anchor="middle" fill="#5F5E5A">xQueueReceive</text>
+<text font-family="sans-serif" font-size="12" x="78" y="722" text-anchor="middle" fill="#5F5E5A">print to serial</text>
+<text font-family="sans-serif" font-size="12" x="78" y="740" text-anchor="middle" fill="#5F5E5A">update OLED state</text>
+
+<!-- MCU1 OLED -->
+<text font-family="sans-serif" font-size="12" x="618" y="720" text-anchor="middle" fill="#5F5E5A">reads state</text>
+<text font-family="sans-serif" font-size="12" x="618" y="738" text-anchor="middle" fill="#5F5E5A">updates display</text>
+
+<!-- Repeat divider -->
+<line x1="40" y1="760" x2="640" y2="760" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="3 3"/>
+<text font-family="sans-serif" font-size="12" x="78"  y="782" text-anchor="middle" fill="#5F5E5A">vTaskDelay(2s)</text>
+<text font-family="sans-serif" font-size="12" x="78"  y="800" text-anchor="middle" fill="#5F5E5A">↻ repeat</text>
+<text font-family="sans-serif" font-size="12" x="186" y="782" text-anchor="middle" fill="#5F5E5A">vTaskDelay(3s)</text>
+<text font-family="sans-serif" font-size="12" x="186" y="800" text-anchor="middle" fill="#5F5E5A">↻ repeat</text>
+<text font-family="sans-serif" font-size="12" x="510" y="674" text-anchor="middle" fill="#5F5E5A">vTaskDelay</text>
+<text font-family="sans-serif" font-size="12" x="510" y="692" text-anchor="middle" fill="#5F5E5A">↻ repeat</text>
+
+<!-- Legend -->
+<line x1="40"  y1="826" x2="640" y2="826" stroke="#D3D1C7" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="40"  y="848" fill="#5F5E5A">Legend:</text>
+<line x1="110" y1="848" x2="160" y2="848" stroke="#2C2C2A" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="168" y="848" fill="#5F5E5A">I2C transmission on shared wire</text>
+<line x1="420" y1="848" x2="470" y2="848" stroke="#888780" stroke-width="1" marker-end="url(#arrow)"/>
+<text font-family="sans-serif" font-size="12" x="478" y="848" fill="#5F5E5A">internal queue handoff</text>
+<rect x="110" y="864" width="50" height="20" rx="3" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+<text font-family="sans-serif" font-size="12" x="135" y="874" text-anchor="middle" dominant-baseline="central" fill="#2C2C2A">mutex op</text>
+<rect x="420" y="864" width="50" height="20" rx="3" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="3 2"/>
+<text font-family="sans-serif" font-size="12" x="478" y="874" fill="#5F5E5A">task blocked on mutex</text>
+
+</svg>
