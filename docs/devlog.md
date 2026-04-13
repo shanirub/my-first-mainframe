@@ -442,3 +442,124 @@ multi-master wall. The foundation built in Phases 1–2 is unchanged and reused.
 2. Redesign SharedBus for task-safe operation
 3. Redesign each MCU as FreeRTOS tasks
 4. Full 5-MCU simultaneous bus test with new architecture
+
+---
+
+## Phase 2.5 — FreeRTOS PoC: Multi-Master I2C Validation
+*Goal: validate three assumptions before migrating all five MCUs to FreeRTOS*
+
+### Context
+
+Phase 2 testing revealed that TwoWire on ESP32-C3 locks into master or slave
+mode at boot. A slave cannot initiate transmissions, meaning MCU #4 (JES)
+cannot send directly to MCU #3 (DASD) without routing through MCU #1. This
+distorts the mainframe architecture. ADR-007 documents the pivot to FreeRTOS
+tasks with mutex-protected bus access so any MCU can temporarily become master,
+transmit, then return to slave.
+
+Before migrating all five MCUs, three assumptions had to be validated on real
+hardware using MCU #1 and MCU #2 only.
+
+### What we built
+
+- `SharedBus` refactored: `beginMaster()` / `beginSlave()` replaced by
+  `init(address)`. Internally: `busMutex` protects all bus access,
+  `_rxSemaphore` replaces `volatile bool _rxReady`, ISR now calls
+  `xSemaphoreGiveFromISR()` to wake the receiver task instantly instead of
+  relying on polling.
+- `send()` internally switches master → transmit → slave while holding
+  `busMutex`. Any task on the same MCU can call it safely.
+- `poll()` blocks the receiver task on `_rxSemaphore` — zero CPU consumed
+  while waiting. Wakes instantly when the ISR fires.
+- MCU #1 `main.cpp`: four FreeRTOS tasks — Sender A (2s), Sender B (3s),
+  Receiver (pri=3), Logic, OLED (pri=1). Two sender tasks at different
+  intervals deliberately collide to stress-test the mutex.
+- MCU #2 `main.cpp`: three FreeRTOS tasks — Receiver (pri=3), Logic, OLED.
+  Logic task validates every received message and sends HEARTBEAT_ACK.
+- Separate `displayMutex` on both MCUs protects display state struct from
+  partial reads by the OLED task during context switches.
+- Stack size constants added to `shared_config.h` (bytes, not words):
+  `STACK_SIZE_SENDER` / `STACK_SIZE_LOGIC` = 4096,
+  `STACK_SIZE_RECEIVER` / `STACK_SIZE_OLED` = 2048.
+
+### Critical fix: do not call vTaskStartScheduler() on ESP32 Arduino
+
+The first flash crashed immediately after tasks were created:
+
+```
+func: vPortSetupTimer
+expression: esp_intr_alloc(ETS_SYSTIMER_TARGET0_EDGE_INTR_SOURCE ...)
+ESP_ERR_NOT_FOUND
+abort() was called
+```
+
+Root cause: ESP32 Arduino starts FreeRTOS automatically before `setup()` is
+called. `setup()` and `loop()` themselves run inside a FreeRTOS task called
+`loopTask`. Calling `vTaskStartScheduler()` explicitly tried to start the
+scheduler a second time, which attempted to re-allocate the systick interrupt
+— already taken — and crashed.
+
+Fix: remove `vTaskStartScheduler()` entirely. Tasks created with `xTaskCreate()`
+start running immediately because the scheduler is already active. Added
+`vTaskDelete(NULL)` in `loop()` to delete `loopTask` and reclaim its stack
+(~8KB) once `setup()` returns.
+
+```cpp
+// setup(): just create tasks and return
+xTaskCreate(senderTaskA, "SenderA", STACK_SIZE_SENDER, NULL, 2, NULL);
+// ... other tasks ...
+// no vTaskStartScheduler() call
+
+void loop() {
+    vTaskDelete(NULL); // delete loopTask, reclaim stack
+}
+```
+
+### Verified pass criteria
+
+All three assumptions passed. See `docs/poc/results.md` for full details.
+
+| Assumption | Result | Evidence |
+|---|---|---|
+| A1 — mode switching | PASS | No BUS_FAULT across 300+ cycles |
+| A2 — queue integrity | PASS | MCU #2 RX = MCU #1 A+B sends exactly |
+| A3 — mutex protection | PASS | Zero validation failures on MCU #2 |
+
+Occasional `NOT_FOUND` (BusError value 1) errors observed on both senders.
+These are clean I2C NACKs occurring when MCU #2 is briefly in master mode
+sending a HEARTBEAT_ACK and temporarily cannot receive. This is expected
+half-duplex behavior — not a mode switching failure or mutex bug. The full
+architecture will handle this with retry logic already defined in the message
+protocol.
+
+![PoC result — MCU #1 and MCU #2 OLEDs running](captures/poc_rtos_result.jpeg)
+
+MCU #1 OLED shows send counts for both Sender A and B incrementing
+independently, ACK count tracking in sync with MCU #2 RX count.
+MCU #2 OLED shows RX incrementing with Last: HEARTBEAT — clean receive
+throughout the test run.
+
+### Key learnings
+
+- On ESP32 Arduino, FreeRTOS is already running when `setup()` is called.
+  Never call `vTaskStartScheduler()` — it crashes with `ESP_ERR_NOT_FOUND`.
+- ISR to task signaling via `xSemaphoreGiveFromISR()` + `portYIELD_FROM_ISR()`
+  is the correct FreeRTOS pattern. The receiver task wakes in the same tick
+  as the ISR returns if it has higher priority than the running task.
+- A separate `displayMutex` for display state is important. The `busMutex`
+  can be held for tens of milliseconds during a full send cycle — an OLED
+  task waiting on it would produce visible display lag.
+- Stack size units on ESP32 `xTaskCreate()` are bytes, not words (unlike
+  vanilla FreeRTOS). 4096 bytes for tasks using ArduinoJson + Serial,
+  2048 bytes for shallow tasks (receiver, OLED).
+- `volatile` does not replace a mutex for multi-field structs. A context
+  switch mid-write leaves the struct in a partially updated state that
+  `volatile` cannot prevent.
+
+### Next steps
+
+Phase 2.5 complete. Proceed to:
+1. Update ADR-007 status
+2. Update roadmap Phase 2.5 checklist
+3. Design full 5-MCU FreeRTOS task architecture
+4. Migrate SharedBus and main.cpp for MCUs #3, #4, #5
