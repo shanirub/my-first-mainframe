@@ -2,6 +2,7 @@
 
 ## Status
 Accepted — supersedes single-loop approach from Phases 1–2
+**Validation complete 2026-04-13. All three assumptions passed. Full migration approved.**
 
 ## Context
 Phase 2 testing revealed a fundamental constraint: TwoWire on ESP32-C3
@@ -34,7 +35,9 @@ Each MCU runs a set of tasks rather than a single loop():
 
 SharedBus is redesigned to be task-safe:
 - Mutex protects all bus access (prevents simultaneous master attempts)
-- beginMaster() / beginSlave() can be called at runtime to switch modes
+- `init(address)` replaces `beginMaster()` / `beginSlave()` — initialises in
+  slave mode, creates busMutex and rxSemaphore before registering ISR
+- `send()` internally switches master → transmit → slave while holding mutex
 - Any MCU can initiate communication when it holds the mutex
 
 ## Reasoning
@@ -57,26 +60,38 @@ The low-level work was not wasted — it built the foundation:
 - Identified the constraint through proper testing rather than guessing
 
 ## What changes
-- main.cpp structure: setup() creates tasks, loop() becomes minimal or empty
-- SharedBus: add mutex, add runtime mode switching
+- main.cpp structure: setup() creates tasks, loop() calls vTaskDelete(NULL)
+- SharedBus: mutex + rxSemaphore added, runtime mode switching via init()
 - Communication pattern: any MCU can initiate — no single master required
 
 ## What stays the same
 - All 5 MCU roles and I2C addresses
 - OledDisplay library
 - MessageProtocol library (field constants, validation, UUID generation)
-- shared_config.h
+- shared_config.h (stack size constants added)
 - Physical wiring, hub, pull-ups
 
-## Validation plan
-Before rewriting all MCUs, validate three assumptions:
-1. TwoWire mode switching (master→slave→master) works on ESP32-C3 at runtime
-2. FreeRTOS queue correctly passes messages between tasks without data loss
-3. Mutex-protected bus access prevents corruption under concurrent send attempts
+## Validation results
+*Tested 2026-04-13 on MCU #1 (0x08) and MCU #2 (0x09).*
+*Full results in docs/poc/results.md. Photo in docs/captures/poc_rtos_result.png.*
 
-All three must pass on a 2-MCU test before full migration.
+| Assumption | Result | Evidence |
+|---|---|---|
+| A1 — TwoWire mode switching works at runtime | PASS | No BUS_FAULT across 300+ cycles |
+| A2 — FreeRTOS queue passes messages without loss | PASS | MCU #2 RX = MCU #1 A+B sends exactly |
+| A3 — Mutex prevents corruption under concurrent sends | PASS | Zero validation failures on MCU #2 |
+
+Occasional `NOT_FOUND` errors observed — clean I2C NACKs when the target MCU
+is briefly in master mode. Expected half-duplex behavior. Will be handled by
+retry logic in Phase 3 application layer.
+
+**Critical finding during validation:** `vTaskStartScheduler()` must not be
+called on ESP32 Arduino — the framework starts FreeRTOS before `setup()` runs.
+Calling it explicitly crashes with `ESP_ERR_NOT_FOUND` on the systick interrupt.
+Use `vTaskDelete(NULL)` in `loop()` instead to reclaim loopTask stack.
 
 ## Consequences
 - Phase 3 subsystem logic implementations will use FreeRTOS task pattern
-- SharedBus v2 required before Phase 3 begins
+- SharedBus v2 complete and validated — ready for full 5-MCU migration
 - Each MCU will have a well-defined task list in its CLAUDE.md
+- MCUs #3, #4, #5 main.cpp must be migrated to `init()` API before Phase 3

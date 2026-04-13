@@ -33,7 +33,7 @@
 
 ---
 
-## Phase 2.5 — Architecture Pivot: FreeRTOS *(replanning in progress)*
+## Phase 2.5 — Architecture Pivot: FreeRTOS *(complete 2026-04-13)*
 
 The Arduino loop() model was found insufficient for authentic mainframe
 subsystem-to-subsystem communication. Key constraint: TwoWire on ESP32-C3
@@ -45,12 +45,13 @@ FreeRTOS — already running under Arduino on ESP32 — surfaces as the right
 abstraction layer. Tasks map naturally to subsystems, queues model job
 scheduling, mutexes protect bus access.
 
-**See ADR-007 for full reasoning.**
+**See ADR-007 for full reasoning and validation results.**
 
 - [x] Identify I2C master/slave constraint via testing
 - [x] Document pivot reasoning (ADR-007)
-- [ ] Validate FreeRTOS multi-master I2C on ESP32-C3 (proof of concept)
-- [ ] Redesign SharedBus for task-safe operation (mutex + mode switching)
+- [x] Validate FreeRTOS multi-master I2C on ESP32-C3 (proof of concept)
+- [x] Redesign SharedBus for task-safe operation (mutex + mode switching)
+- [x] Validate all three PoC assumptions on real hardware (MCU #1 + MCU #2)
 - [ ] Redesign each MCU's main.cpp as FreeRTOS tasks
 - [ ] Full 5-MCU simultaneous bus test with FreeRTOS architecture
 
@@ -58,8 +59,11 @@ scheduling, mutexes protect bus access.
 
 ## Phase 3 — Individual Subsystems *(Weeks 3–4)*
 
-> To be replanned after FreeRTOS validation. Core subsystem roles unchanged.
+> Replanned for FreeRTOS task pattern. Core subsystem roles unchanged.
+> MCUs #3, #4, #5 must be migrated to SharedBus init() API before starting.
 
+- [ ] Migrate MCUs #3, #4, #5 main.cpp to FreeRTOS task pattern
+- [ ] Full 5-MCU simultaneous bus test
 - [ ] MCU #1: heartbeat task, serial console input, logging task
 - [ ] MCU #2: transaction validation and routing tasks
 - [ ] MCU #3: SD card read/write tasks (accounts.json + transactions.log)
