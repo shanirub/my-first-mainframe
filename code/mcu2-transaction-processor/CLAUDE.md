@@ -2,25 +2,56 @@
 
 ## Identity
 - I2C address on shared bus: 0x09
-- Role: validates and routes banking transactions
+- Role: validates and executes banking transactions, coordinates with MCU #3
 - upload_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
 - monitor_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
 
-## Current State
-- OLED working (confirmed): GPIO3=SDA, GPIO10=SCL via U8g2 software I2C
-- Shared bus I2C: GPIO8=SDA, GPIO9=SCL CONFIRMED WORKING (slave mode)
-- Both buses running simultaneously: CONFIRMED WORKING
-- SharedBus class in use: sharedBus.beginSlave(I2C_ADDRESS), sharedBus.poll()
-- Receive pattern: ISR buffers into _rxBuf, poll() drains safely from loop()
-  — no I2C/OLED calls in interrupt context
-- main.cpp: uses SharedBus + OledDisplay, no raw TwoWire or pin numbers
-- main_oled_backup.cpp.old: pre-merge backup, preserved
-- Phase 1.5 COMPLETE
+## Current State (Phase 2.5 complete)
+- FreeRTOS task pattern running and validated
+- Tasks: Receiver (pri=3), Logic (pri=2), OLED (pri=1)
+- SharedBus v2 in use: sharedBus.init(I2C_ADDRESS)
+- Receiving HEARTBEAT from MCU #1 and sending HEARTBEAT_ACK correctly
+- OLED confirmed working simultaneously with shared bus
+- vTaskDelete(NULL) in loop() — do not add vTaskStartScheduler()
+
+## Phase 3 Tasks
+| Task | Priority | Stack | Role |
+|---|---|---|---|
+| Receiver | 3 | STACK_SIZE_RECEIVER | Blocks on rxSemaphore, puts messages on inboundQueue |
+| Logic | 2 | STACK_SIZE_LOGIC | Sequential transaction handling (Option A) |
+| OLED | 1 | STACK_SIZE_OLED | Updates display every 500ms under displayMutex |
+
+## Phase 3 Logic — Sequential (Option A)
+One transaction at a time. Logic task blocks while waiting for DB responses.
+
+```
+receive JOB_DISPATCH from MCU #4
+→ send DB_READ to MCU #3
+→ block on inboundQueue waiting for DB_READ_RESULT
+→ validate (check funds if WITHDRAW, skip DB_WRITE if BALANCE)
+→ send DB_WRITE to MCU #3
+→ block on inboundQueue waiting for DB_WRITE_ACK
+→ send JOB_COMPLETE to MCU #4
+```
+
+## Phase 4 Logic — State Machine (Option B)
+Replace sequential logic with explicit state machine — never blocks mid-transaction.
+Enables concurrent transactions. Surrounding code (receiver, OLED, queues) unchanged.
+
+```cpp
+enum class TxnState { IDLE, WAITING_DB_READ, WAITING_DB_WRITE };
+```
+
+## Display State
+```cpp
+struct DisplayState {
+    uint32_t txnCount;
+    char     lastTxnType[16];
+    char     lastStatus[16];
+};
+```
 
 ## Critical Fixes (preserved for reference)
 - sharedBus.begin() slave overload requires 4 args: begin(addr, sda, scl, 0)
   The frequency argument (0) is mandatory — no default. Without it, slave never responds.
 - TwoWire(1) silently fails on ESP32-C3 (SOC_I2C_NUM=1). OLED uses U8g2 SW_I2C.
-
-## Next
-Phase 2 — JSON messaging protocol across all 5 MCUs

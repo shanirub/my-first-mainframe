@@ -42,11 +42,36 @@ All in code/shared/libs/ — picked up automatically via lib_extra_dirs = ../sha
 | Library | Purpose |
 |---------|---------|
 | oled_display | U8g2 SW_I2C wrapper: begin(), showStatus(), showError() |
-| shared_bus | TwoWire(0) abstraction: beginMaster(), beginSlave(), send(), poll() |
+| shared_bus | TwoWire(0) abstraction: init(), send(), poll() — FreeRTOS task-safe |
 | message_protocol | JSON envelope builder, schema validation, constants |
 
-shared/config/shared_config.h — all pin definitions and MCU addresses.
-Included via build_flags = -I ../shared/config (not lib_extra_dirs).
+shared/config/shared_config.h — all pin definitions, MCU addresses, and
+FreeRTOS stack size constants. Included via build_flags = -I ../shared/config.
+
+## SharedBus API (current — FreeRTOS)
+- `init(uint8_t address)` — replaces beginMaster()/beginSlave(). Creates
+  busMutex and rxSemaphore, initialises TwoWire(0) in slave mode, registers ISR.
+  Must be called before xTaskCreate().
+- `send(uint8_t target, const char* msg)` — takes busMutex, switches to master,
+  transmits, switches back to slave, gives mutex. Safe from any task.
+- `poll(char* buf, int len)` — blocks calling task on rxSemaphore until ISR
+  signals a message arrived. Call from receiver task only.
+- `busMutex` — public SemaphoreHandle_t, exposed if tasks need direct access.
+
+## FreeRTOS Task Pattern
+Every MCU uses: Receiver (pri=3), Logic (pri=2), OLED (pri=1).
+Subsystem-specific tasks added per MCU role (see freertos_architecture.md).
+Display state protected by dedicated displayMutex (separate from busMutex).
+All handles are globals in main.cpp.
+
+Do NOT call vTaskStartScheduler() — ESP32 Arduino starts FreeRTOS before
+setup(). Call vTaskDelete(NULL) in loop() to reclaim loopTask stack.
+
+## Stack Size Constants (shared_config.h)
+Units are bytes (ESP32 xTaskCreate takes bytes, not words):
+- STACK_SIZE_SENDER / STACK_SIZE_LOGIC = 4096 (JSON + Serial tasks)
+- STACK_SIZE_RECEIVER / STACK_SIZE_OLED = 2048 (shallow tasks)
+- HTTP server task uses 8192 (WiFi stack requirement)
 
 ## Known Bugs / Confirmed Fixes
 - ESP32-C3 SOC_I2C_NUM=1: only one hardware I2C. TwoWire(1) silently fails.
@@ -57,40 +82,39 @@ Included via build_flags = -I ../shared/config (not lib_extra_dirs).
 - ArduinoJson v7: doc.as<JsonObject>() invalid on const → use JsonObjectConst
 - SharedBus _rxBuf must be 256 bytes — default 32 caused IncompleteInput errors
 - I2C_BUFFER_LENGTH=256 required in all platformio.ini build_flags
+- vTaskStartScheduler() must NOT be called — crashes with ESP_ERR_NOT_FOUND
+  because ESP32 Arduino already started FreeRTOS before setup() ran.
 
 ## Current Architecture Status
-Phase 2 complete. Phase 2.5 (FreeRTOS pivot) in planning.
+Phase 2.5 complete (2026-04-13). FreeRTOS PoC validated on MCU #1 + MCU #2.
+Full 5-MCU FreeRTOS architecture designed. Phase 3 ready to begin.
 
 **What works:**
-- All 5 MCUs receiving heartbeats from MCU #1 (sequential pair tests confirmed)
-- OLEDs running simultaneously with shared bus on all MCUs
-- MessageProtocol library: UUID v4 job IDs, schema validation, integer cents
-- SharedBus library: ISR/poll() pattern, BusError typed returns
+- All 5 MCUs physically connected and wired to shared bus hub
+- FreeRTOS task pattern validated: receiver/logic/OLED tasks on MCU #1 and #2
+- SharedBus v2: mutex + rxSemaphore + runtime mode switching confirmed stable
+- MCU #1 and MCU #2 running continuously with heartbeat + ACK flow
+- MessageProtocol library: unchanged, fully compatible with FreeRTOS pattern
+- OledDisplay library: unchanged
 
-**Why FreeRTOS:**
-The Arduino loop() model cannot support authentic mainframe subsystem-to-subsystem
-communication. TwoWire on ESP32-C3 is master OR slave per boot — a slave cannot
-initiate transmissions. This means MCU #4 (JES) cannot send directly to MCU #3
-(DASD) without routing through MCU #1. FreeRTOS tasks with mutex-protected bus
-access solves this cleanly. See ADR-007.
+**What needs doing in Phase 3:**
+- Migrate MCUs #3, #4, #5 main.cpp to FreeRTOS init() API
+- Full 5-MCU simultaneous bus test
+- Implement subsystem logic per MCU (see freertos_architecture.md)
 
-**What stays the same after FreeRTOS migration:**
-- All 5 MCU roles and I2C addresses — unchanged
-- OledDisplay library — unchanged
-- MessageProtocol library — unchanged
-- shared_config.h — unchanged
-- Physical wiring and hub — unchanged
+## Key Design Decisions for Phase 3
+- MCU #2: sequential transaction handling (one at a time) — state machine deferred to Phase 4
+- MCU #4: immediate job dispatch — priority queue deferred to Phase 4
+- MCU #5: single pending request slot — expand to 4 in Phase 4
+- MCU #1: serial monitor commands for operator input in Phase 3, web dashboard in Phase 4
+- Serial command format: `DEPOSIT 12345678 10000` (amounts in cents)
 
-**What changes:**
-- SharedBus: needs beginMaster()/beginSlave() switching + mutex protection
-- Each MCU main.cpp: loop() replaced with FreeRTOS task creation + scheduler start
-- Communication pattern: any MCU can initiate, mutex serialises bus access
-
-## Next Steps (Phase 2.5)
-1. Validate FreeRTOS multi-master I2C proof of concept on 2 MCUs
-2. Redesign SharedBus for task-safe operation
-3. Redesign each MCU as a set of FreeRTOS tasks
-4. Full 5-MCU simultaneous bus test
+## Next Steps (Phase 3 start)
+1. Migrate MCU #3 main.cpp to FreeRTOS pattern (init() API, receiver/logic/OLED tasks)
+2. Migrate MCU #4 main.cpp to FreeRTOS pattern
+3. Migrate MCU #5 main.cpp to FreeRTOS pattern
+4. Full 5-MCU simultaneous bus test (all receiving heartbeats from MCU #1)
+5. Begin individual subsystem logic per freertos_architecture.md
 
 ## PulseView Setup
 - D0 = SDA (GPIO8, orange wire)

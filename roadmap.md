@@ -52,38 +52,52 @@ scheduling, mutexes protect bus access.
 - [x] Validate FreeRTOS multi-master I2C on ESP32-C3 (proof of concept)
 - [x] Redesign SharedBus for task-safe operation (mutex + mode switching)
 - [x] Validate all three PoC assumptions on real hardware (MCU #1 + MCU #2)
-- [ ] Redesign each MCU's main.cpp as FreeRTOS tasks
-- [ ] Full 5-MCU simultaneous bus test with FreeRTOS architecture
+- [x] Design full 5-MCU FreeRTOS task architecture (docs/design/freertos_architecture.md)
 
 ---
 
-## Phase 3 — Individual Subsystems *(Weeks 3–4)*
+## Phase 3 — Individual Subsystems *(simple implementations)*
 
-> Replanned for FreeRTOS task pattern. Core subsystem roles unchanged.
-> MCUs #3, #4, #5 must be migrated to SharedBus init() API before starting.
+> FreeRTOS task pattern used throughout. Each MCU implemented and tested
+> incrementally: receiver + OLED first, then logic, then subsystem task,
+> then full flow. See docs/design/freertos_architecture.md for task design.
 
-- [ ] Migrate MCUs #3, #4, #5 main.cpp to FreeRTOS task pattern
+- [ ] Migrate MCUs #3, #4, #5 to FreeRTOS task pattern (init() API)
 - [ ] Full 5-MCU simultaneous bus test
-- [ ] MCU #1: heartbeat task, serial console input, logging task
-- [ ] MCU #2: transaction validation and routing tasks
-- [ ] MCU #3: SD card read/write tasks (accounts.json + transactions.log)
-- [ ] MCU #4: priority job queue task, dispatcher task
-- [ ] MCU #5: WiFi/HTTP task, web console, I/O handler task
+- [ ] MCU #1: heartbeat task (single sender, all 4 slaves), serial console input, logic task
+- [ ] MCU #2: sequential transaction handling — one transaction at a time (Option A)
+- [ ] MCU #3: SD card read/write via dedicated SD task (accounts.json + transactions.log)
+- [ ] MCU #4: immediate job dispatch — receive JOB_SUBMIT, dispatch to MCU #2 immediately
+- [ ] MCU #5: WiFi/HTTP server task, web console (single pending request slot), I2C logic task
+- [ ] End-to-end transaction flow verified: DEPOSIT, WITHDRAW, BALANCE
 
 ---
 
-## Phase 4 — Integration *(Week 5)*
+## Phase 4 — Integration and Production Implementations
 
-- [ ] End-to-end transaction flow (deposit, withdrawal, balance)
-- [ ] Heartbeat and health monitoring across all subsystems
-- [ ] Full banking scenarios verified on real hardware
+> Replace Phase 3 simple implementations with production-grade designs.
+> The surrounding task/queue structure is unchanged — only logic internals
+> are replaced. All Phase 3 code is scaffold, not throwaway.
+
+- [ ] MCU #2: replace sequential logic with state machine (Option B) — enables concurrent transactions
+- [ ] MCU #4: replace immediate dispatch with priority queue — HIGH/MEDIUM/LOW ordering
+- [ ] MCU #5: expand pending request table to 4 slots (from 1)
+- [ ] Heartbeat and health monitoring — MCU #1 flags non-responding subsystems on OLED
+- [ ] Single retry on BusError::NOT_FOUND before reporting failure
+- [ ] Full banking scenarios verified on real hardware (deposit, withdrawal, balance, insufficient funds)
+- [ ] MCU #1: WiFi web dashboard (replaces serial monitor for operator commands)
+- [ ] RTC timestamps on all transaction log entries (DS1307 on MCU #1)
 
 ---
 
-## Phase 5 — Advanced Features *(Week 6)*
+## Phase 5 — Advanced Features
 
-- [ ] Priority job scheduling with HIGH / MEDIUM / LOW queues
-- [ ] Atomic transfer transactions (two-phase commit)
-- [ ] Load testing (50 sequential transactions without dropping)
-- [ ] Failure simulation (physical subsystem disconnection)
-- [ ] Crash recovery via write-ahead log on MCU #3
+- [ ] Atomic TRANSFER transactions (two-phase commit across MCU #2 and MCU #3)
+- [ ] Crash recovery — MCU #3 replays incomplete transactions from write-ahead log on boot
+- [ ] Load testing — 50 sequential transactions without dropping
+- [ ] Failure simulation — physically disconnect a subsystem, observe timeout and error propagation
+- [ ] Priority job scheduling stress test — mixed HIGH/MEDIUM/LOW queue under load
+- [ ] Binary message protocol — replace JSON with compact binary format for performance comparison
+- [ ] USB-to-I2C PC dispatcher *(in consideration)* — connect PC directly to shared bus via CH341/MCP2221 adapter for automated test injection and scripted transaction sequences
+- [ ] MCU #1 serial console account management — create/delete accounts at runtime
+- [ ] Account balance limits and overdraft rules
