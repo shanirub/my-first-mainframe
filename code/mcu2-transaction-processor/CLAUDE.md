@@ -6,11 +6,11 @@
 - upload_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
 - monitor_port = /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00
 
-## Current State (Phase 2.5 complete)
-- FreeRTOS task pattern running and validated
-- Tasks: Receiver (pri=3), Logic (pri=2), OLED (pri=1)
-- SharedBus v2 in use: sharedBus.init(I2C_ADDRESS)
+## Current State (Phase 3 — heartbeat scaffold running)
+- FreeRTOS tasks running: Receiver (pri=3), Logic (pri=2), OLED (pri=1)
 - Receiving HEARTBEAT from MCU #1 and sending HEARTBEAT_ACK correctly
+- Transaction handling (JOB_DISPATCH logic) not yet implemented
+- SharedBus v2 in use: sharedBus.init(I2C_ADDRESS)
 - OLED confirmed working simultaneously with shared bus
 - vTaskDelete(NULL) in loop() — do not add vTaskStartScheduler()
 

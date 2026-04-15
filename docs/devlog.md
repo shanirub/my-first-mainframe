@@ -563,3 +563,76 @@ Phase 2.5 complete. Proceed to:
 2. Update roadmap Phase 2.5 checklist
 3. Design full 5-MCU FreeRTOS task architecture
 4. Migrate SharedBus and main.cpp for MCUs #3, #4, #5
+
+---
+
+## Phase 3 Start — 5-MCU FreeRTOS Validated + MCU #1 Heartbeat & Health Monitoring
+*Goal: migrate all MCUs to FreeRTOS task pattern and confirm full 5-MCU simultaneous bus operation*
+
+### What we built
+
+**MCUs #3, #4, #5 migrated to FreeRTOS**
+Each follows the same scaffold pattern: Receiver (pri=3), Logic (pri=2), OLED (pri=1).
+Logic task handles HEARTBEAT → HEARTBEAT_ACK for now. Subsystem-specific logic
+(DB_READ/DB_WRITE, JOB_DISPATCH, HTTP server) to follow in Phase 3 continuation.
+
+**Full 5-MCU simultaneous bus test confirmed**
+All five MCUs running concurrently on the shared I2C bus. MCU #1 sends HEARTBEAT
+to all four slaves sequentially; all four respond with HEARTBEAT_ACK. OLEDs blinking
+on all five boards simultaneously. This is the first time the full system has run
+as intended.
+
+**MCU #1: heartbeat task + timestamp-based health monitoring**
+Replaced Phase 2.5 dual-sender PoC with a single Heartbeat task. Key design change:
+moved from a per-cycle `activeSubsystems` counter to per-slave `lastAckTime[4]`
+timestamps. Active count is computed at display time by comparing each timestamp
+against `HEARTBEAT_ACK_TIMEOUT_MS` (30s).
+
+### Why the counter approach caused OLED flicker
+
+The original design stored `activeSubsystems` as a shared field written by two tasks:
+- `heartbeatTask` reset it to 0 at the start of each cycle
+- `logicTask` incremented it on each ACK
+
+The OLED task ran on a 500ms timer independent of the heartbeat cycle (10s). Any time
+the OLED task snapshotted `displayState` between the reset and the last ACK arriving,
+it would briefly display "Act:0/4" or a partial count — visible as a flicker on the
+display every 10 seconds.
+
+### The fix: timestamps instead of a running counter
+
+```cpp
+struct SharedState {
+    uint32_t lastAckTime[4];  // millis() written by logicTask on each ACK
+    uint32_t heartbeatCount;
+    char     lastError[24];
+};
+```
+
+`heartbeatTask` no longer touches the active count at all. `logicTask` writes
+`millis()` to `lastAckTime[slaveIndex(from)]` on each ACK. `oledTask` computes
+the active count locally from the snapshot — a slave is active if its `lastAckTime`
+is non-zero and within `HEARTBEAT_ACK_TIMEOUT_MS`. Nothing resets between cycles.
+No partial state is ever visible.
+
+The same computation is used in `serialInputTask`'s STATUS handler for consistency.
+
+### Key constants added to shared_config.h
+```cpp
+#define HEARTBEAT_INTERVAL_MS    10000   // interval between heartbeat cycles
+#define HEARTBEAT_ACK_TIMEOUT_MS 30000   // slave inactive after 3× interval
+```
+
+### Verified pass criteria
+- All 5 MCUs receiving heartbeats and ACKing ✅
+- MCU #1 OLED Act:4/4 stable — no flicker ✅
+- HEARTBEAT_ACK_TIMEOUT_MS causes a slave to drop to Act:3/4 if unplugged ✅ (by design)
+- Full 5-MCU simultaneous bus operation confirmed on real hardware ✅
+
+### Key learnings
+- A shared counter written by two tasks at different phases of a cycle is inherently
+  racy with a periodic reader — even with mutex protection. Timestamps solve this
+  cleanly: each writer is independent, the reader always computes from a consistent snapshot.
+- The 10s heartbeat interval means a slave timeout of 30s (3×) gives two missed
+  heartbeats before flagging — enough margin for occasional bus errors without
+  false positives.

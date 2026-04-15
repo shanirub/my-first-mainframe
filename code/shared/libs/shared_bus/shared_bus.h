@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/queue.h>
 
 enum class BusError { OK, NOT_FOUND, BUS_FAULT, TIMEOUT };
 
@@ -43,3 +44,20 @@ private:
     void _switchToMaster();
     void _switchToSlave();
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReceiverParams — passed to receiverTask via xTaskCreate pvParameters.
+//
+// The struct MUST be a file-scope static in main.cpp — do NOT allocate it
+// inside setup(). setup() returns after task creation; a stack-allocated
+// struct would be destroyed, leaving the task with a dangling pointer.
+// ─────────────────────────────────────────────────────────────────────────────
+struct ReceiverParams {
+    SharedBus*    bus;
+    QueueHandle_t queue;
+};
+
+// Shared FreeRTOS receiver task.
+// Blocks on bus->poll(), then forwards each message to queue.
+// Pass a static ReceiverParams* as pvParameters to xTaskCreate.
+void receiverTask(void* params);

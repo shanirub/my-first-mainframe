@@ -86,21 +86,24 @@ Units are bytes (ESP32 xTaskCreate takes bytes, not words):
   because ESP32 Arduino already started FreeRTOS before setup() ran.
 
 ## Current Architecture Status
-Phase 2.5 complete (2026-04-13). FreeRTOS PoC validated on MCU #1 + MCU #2.
-Full 5-MCU FreeRTOS architecture designed. Phase 3 ready to begin.
+Phase 3 in progress (2026-04-15). All 5 MCUs running FreeRTOS task pattern simultaneously.
 
 **What works:**
-- All 5 MCUs physically connected and wired to shared bus hub
-- FreeRTOS task pattern validated: receiver/logic/OLED tasks on MCU #1 and #2
-- SharedBus v2: mutex + rxSemaphore + runtime mode switching confirmed stable
-- MCU #1 and MCU #2 running continuously with heartbeat + ACK flow
-- MessageProtocol library: unchanged, fully compatible with FreeRTOS pattern
+- All 5 MCUs on shared bus: receiver/logic/OLED tasks running, heartbeats ACKed
+- MCU #1: heartbeat task (all 4 slaves, 10s interval), timestamp-based health tracking
+  on OLED (Act:X/4 via lastAckTime + HEARTBEAT_ACK_TIMEOUT_MS=30s)
+- SharedBus v2: mutex + rxSemaphore + runtime mode switching confirmed stable at 5 MCUs
+- MessageProtocol library: unchanged, fully compatible
 - OledDisplay library: unchanged
 
-**What needs doing in Phase 3:**
-- Migrate MCUs #3, #4, #5 main.cpp to FreeRTOS init() API
-- Full 5-MCU simultaneous bus test
-- Implement subsystem logic per MCU (see freertos_architecture.md)
+**What needs doing (Phase 3 remainder):**
+- MCU #1: serial console commands — DEPOSIT/WITHDRAW/BALANCE dispatch to MCU #4
+  (serialInputTask + logicTask stub exist; dispatch logic not yet implemented)
+- MCU #2: sequential transaction handling — one transaction at a time
+- MCU #3: SD card read/write (accounts.json + transactions.log)
+- MCU #4: immediate job dispatch — receive JOB_SUBMIT, forward to MCU #2
+- MCU #5: WiFi/HTTP server, web console, I2C logic task
+- End-to-end transaction flow: DEPOSIT, WITHDRAW, BALANCE
 
 ## Key Design Decisions for Phase 3
 - MCU #2: sequential transaction handling (one at a time) — state machine deferred to Phase 4
@@ -109,12 +112,13 @@ Full 5-MCU FreeRTOS architecture designed. Phase 3 ready to begin.
 - MCU #1: serial monitor commands for operator input in Phase 3, web dashboard in Phase 4
 - Serial command format: `DEPOSIT 12345678 10000` (amounts in cents)
 
-## Next Steps (Phase 3 start)
-1. Migrate MCU #3 main.cpp to FreeRTOS pattern (init() API, receiver/logic/OLED tasks)
-2. Migrate MCU #4 main.cpp to FreeRTOS pattern
-3. Migrate MCU #5 main.cpp to FreeRTOS pattern
-4. Full 5-MCU simultaneous bus test (all receiving heartbeats from MCU #1)
-5. Begin individual subsystem logic per freertos_architecture.md
+## Next Steps (Phase 3 continuation)
+1. MCU #1: implement serial command dispatch (DEPOSIT/WITHDRAW/BALANCE → MCU #4)
+2. MCU #4: implement job dispatch (receive JOB_SUBMIT from MCU #1, forward to MCU #2)
+3. MCU #2: implement sequential transaction handling
+4. MCU #3: implement SD card read/write for account data
+5. MCU #5: implement WiFi/HTTP server and I2C logic task
+6. End-to-end flow test: DEPOSIT/WITHDRAW/BALANCE through full chain
 
 ## PulseView Setup
 - D0 = SDA (GPIO8, orange wire)

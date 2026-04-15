@@ -27,3 +27,7 @@
 #define STACK_SIZE_RECEIVER  2048
 #define STACK_SIZE_LOGIC     4096
 #define STACK_SIZE_OLED      2048
+
+// ─── Heartbeat Timing ───────────────────────────────────────────────────────
+#define HEARTBEAT_INTERVAL_MS       10000   // interval between heartbeat cycles
+#define HEARTBEAT_ACK_TIMEOUT_MS    30000   // time before a slave is considered inactive (3× interval)

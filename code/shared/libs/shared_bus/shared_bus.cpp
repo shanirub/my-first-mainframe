@@ -105,6 +105,25 @@ void SharedBus::_switchToSlave() {
 // Must not call any blocking FreeRTOS API — uses FromISR variants only.
 // No I2C calls, no Serial, no heap allocation.
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// receiverTask  (free function — shared across all MCUs)
+//
+// Blocks on bus->poll() which blocks on rxSemaphore until the ISR fires.
+// Forwards each raw message buffer to the inboundQueue for the logic task.
+// No JSON, no Serial — keep this hot path minimal.
+// ─────────────────────────────────────────────────────────────────────────────
+void receiverTask(void* params) {
+    ReceiverParams* p = static_cast<ReceiverParams*>(params);
+    char buf[256];
+    while (true) {
+        if (p->bus->poll(buf, sizeof(buf))) {
+            if (xQueueSend(p->queue, buf, portMAX_DELAY) != pdTRUE) {
+                Serial.println("[RX] queue full — message dropped");
+            }
+        }
+    }
+}
+
 void SharedBus::_onReceiveISR(int numBytes) {
     if (_instance == nullptr) return;
 

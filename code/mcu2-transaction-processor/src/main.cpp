@@ -16,6 +16,9 @@ SharedBus   sharedBus;
 // Inbound queue: receiver task → logic task.
 QueueHandle_t inboundQueue;
 
+// Static: must outlive setup(). Do NOT move inside setup() — task holds a pointer to this.
+static ReceiverParams receiverParams;
+
 // Display state — written by logic task, read by OLED task.
 struct DisplayState {
     uint32_t rxCount;
@@ -24,25 +27,6 @@ struct DisplayState {
 };
 static DisplayState      displayState = {0, "none", "none"};
 static SemaphoreHandle_t displayMutex;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Task: Receiver  (priority 3 — highest)
-//
-// Blocks on SharedBus::poll() which blocks on _rxSemaphore.
-// When the ISR gives the semaphore, this task copies the buffer and puts it
-// on inboundQueue. No JSON, no Serial, no OLED here — keep this path fast.
-// ─────────────────────────────────────────────────────────────────────────────
-void receiverTask(void* params) {
-    char buf[256];
-
-    while (true) {
-        if (sharedBus.poll(buf, sizeof(buf))) {
-            if (xQueueSend(inboundQueue, buf, portMAX_DELAY) != pdTRUE) {
-                Serial.println("[MCU2-RX] queue full — message dropped");
-            }
-        }
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Task: Logic  (priority 2)
@@ -175,7 +159,9 @@ void setup() {
         return;
     }
 
-    xTaskCreate(receiverTask, "Receiver", STACK_SIZE_RECEIVER, NULL, 3, NULL);
+    receiverParams = { &sharedBus, inboundQueue };
+
+    xTaskCreate(receiverTask, "Receiver", STACK_SIZE_RECEIVER, &receiverParams, 3, NULL);
     xTaskCreate(logicTask,    "Logic",    STACK_SIZE_LOGIC,    NULL, 2, NULL);
     xTaskCreate(oledTask,     "OLED",     STACK_SIZE_OLED,     NULL, 1, NULL);
 

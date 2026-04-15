@@ -62,9 +62,10 @@ scheduling, mutexes protect bus access.
 > incrementally: receiver + OLED first, then logic, then subsystem task,
 > then full flow. See docs/design/freertos_architecture.md for task design.
 
-- [ ] Migrate MCUs #3, #4, #5 to FreeRTOS task pattern (init() API)
-- [ ] Full 5-MCU simultaneous bus test
-- [ ] MCU #1: heartbeat task (single sender, all 4 slaves), serial console input, logic task
+- [x] Migrate MCUs #3, #4, #5 to FreeRTOS task pattern (init() API)
+- [x] Full 5-MCU simultaneous bus test
+- [x] MCU #1: heartbeat task (single sender, all 4 slaves, timestamp-based health tracking)
+- [ ] MCU #1: serial console commands — DEPOSIT/WITHDRAW/BALANCE dispatch to MCU #4
 - [ ] MCU #2: sequential transaction handling — one transaction at a time (Option A)
 - [ ] MCU #3: SD card read/write via dedicated SD task (accounts.json + transactions.log)
 - [ ] MCU #4: immediate job dispatch — receive JOB_SUBMIT, dispatch to MCU #2 immediately
@@ -82,7 +83,7 @@ scheduling, mutexes protect bus access.
 - [ ] MCU #2: replace sequential logic with state machine (Option B) — enables concurrent transactions
 - [ ] MCU #4: replace immediate dispatch with priority queue — HIGH/MEDIUM/LOW ordering
 - [ ] MCU #5: expand pending request table to 4 slots (from 1)
-- [ ] Heartbeat and health monitoring — MCU #1 flags non-responding subsystems on OLED
+- [x] Heartbeat and health monitoring — MCU #1 flags non-responding subsystems on OLED
 - [ ] Single retry on BusError::NOT_FOUND before reporting failure
 - [ ] Full banking scenarios verified on real hardware (deposit, withdrawal, balance, insufficient funds)
 - [ ] MCU #1: WiFi web dashboard (replaces serial monitor for operator commands)
