@@ -61,15 +61,20 @@ scheduling, mutexes protect bus access.
 > FreeRTOS task pattern used throughout. Each MCU implemented and tested
 > incrementally: receiver + OLED first, then logic, then subsystem task,
 > then full flow. See docs/design/freertos_architecture.md for task design.
+> Implementation order follows dependency chain: DB first, then Transaction
+> Processor, then Job Scheduler, then I/O Controller, then serial console.
 
 - [x] Migrate MCUs #3, #4, #5 to FreeRTOS task pattern (init() API)
 - [x] Full 5-MCU simultaneous bus test
 - [x] MCU #1: heartbeat task (single sender, all 4 slaves, timestamp-based health tracking)
-- [ ] MCU #1: serial console commands — DEPOSIT/WITHDRAW/BALANCE dispatch to MCU #4
+- [ ] MCU #3: replace ESP32-C3 SuperMini with ESP32 DevKit (ADR-008) *(board soldered, wired)*
+- [ ] MCU #3: SD card init confirmed on ESP32 DevKit
+- [ ] MCU #3: FreeRTOS skeleton running on ESP32 DevKit (heartbeat ACK confirmed)
+- [ ] MCU #3: SD task implemented (accounts.json read/write + transactions.log)
 - [ ] MCU #2: sequential transaction handling — one transaction at a time (Option A)
-- [ ] MCU #3: SD card read/write via dedicated SD task (accounts.json + transactions.log)
 - [ ] MCU #4: immediate job dispatch — receive JOB_SUBMIT, dispatch to MCU #2 immediately
 - [ ] MCU #5: WiFi/HTTP server task, web console (single pending request slot), I2C logic task
+- [ ] MCU #1: serial console commands — DEPOSIT/WITHDRAW/BALANCE dispatch to MCU #4
 - [ ] End-to-end transaction flow verified: DEPOSIT, WITHDRAW, BALANCE
 
 ---
@@ -95,6 +100,7 @@ scheduling, mutexes protect bus access.
 
 - [ ] Atomic TRANSFER transactions (two-phase commit across MCU #2 and MCU #3)
 - [ ] Crash recovery — MCU #3 replays incomplete transactions from write-ahead log on boot
+- [ ] RAID-1 storage redundancy — dual SD card modules on MCU #3, every write mirrored to both cards, read from either. Hardware already available (second SD module in stash). Requires ADR.
 - [ ] Load testing — 50 sequential transactions without dropping
 - [ ] Failure simulation — physically disconnect a subsystem, observe timeout and error propagation
 - [ ] Priority job scheduling stress test — mixed HIGH/MEDIUM/LOW queue under load

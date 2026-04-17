@@ -636,3 +636,126 @@ The same computation is used in `serialInputTask`'s STATUS handler for consisten
 - The 10s heartbeat interval means a slave timeout of 30s (3×) gives two missed
   heartbeats before flagging — enough margin for occasional bus errors without
   false positives.
+
+---
+
+## 2026-04-16 — Phase 3: FreeRTOS migration, SD card debugging, ESP32 DevKit substitution
+
+### What was attempted
+
+Phase 3 migration of MCUs #3, #4, #5 from Arduino loop() to FreeRTOS task
+pattern, followed by SD card integration on MCU #3.
+
+---
+
+### FreeRTOS migration (MCUs #3, #4, #5)
+
+All three MCUs migrated from old `sharedBus.beginSlave()` pattern to the
+FreeRTOS `sharedBus.init()` API. The shared `receiverTask` function was
+extracted into the `shared_bus` library to avoid duplication — the task body
+is identical on all MCUs, taking a `ReceiverParams*` via `xTaskCreate` params.
+
+A `static ReceiverParams` is declared at file scope in each MCU's `main.cpp`
+with a comment warning against moving it into `setup()` — the task holds a
+pointer to this struct, so it must outlive `setup()`.
+
+MCU #1 was simultaneously updated from PoC form (SenderA/SenderB mutex stress
+test) to Phase 3 form: single Heartbeat task sending to all 4 slaves
+sequentially every 10 seconds, SerialInput task, Logic task.
+
+**5-MCU simultaneous bus test result:** MCUs #3 and #4 received heartbeats
+immediately. MCUs #2 and #5 were silent — OLED showing RX:0.
+
+**Root cause:** The shared bus hub used pull-up resistors as physical bridges
+between the two breadboard halves. Resistors are unidirectional pull-up
+devices, not wire bridges — 5kΩ in series on the signal path meant MCU #2 and
+#5 (on the far side of the hub) never saw clean I2C logic levels.
+
+**Fix:** Replaced resistors-as-bridges with plain jumper wires. All 5 MCUs
+immediately began receiving heartbeats and sending ACKs. Act:4/4 on MCU #1 OLED.
+
+**OLED flickering bug:** MCU #1 OLED showed Act:2/4 and Act:1/4 intermittently
+despite all 4 slaves ACKing cleanly (confirmed in serial monitor). Root cause:
+`heartbeatTask` reset `activeSubsystems` to 0 at cycle start, then `logicTask`
+incremented it as ACKs arrived over 2 seconds. OLED task snapshotted partial
+counts mid-cycle.
+
+**Fix:** Replaced `activeSubsystems` counter with `lastAckTime[4]` array.
+Each slave's last ACK timestamp is recorded in milliseconds. `oledTask`
+computes active count at display time by counting entries fresher than
+`HEARTBEAT_ACK_TIMEOUT_MS` (30 seconds = 3× heartbeat interval). Count only
+updates when a slave genuinely goes silent — never flickers mid-cycle.
+`HEARTBEAT_INTERVAL_MS` and `HEARTBEAT_ACK_TIMEOUT_MS` added to `shared_config.h`.
+
+`DisplayState` renamed to `SharedState` throughout MCU #1 — more accurate name
+since the struct is shared between multiple tasks, not just display data.
+
+---
+
+### SD card integration — ESP32-C3 SuperMini pin exhaustion
+
+Attempted to add SPI SD card to MCU #3 (ESP32-C3 SuperMini). Wired to
+GPIO6=SCK, GPIO7=MOSI, GPIO2=MISO, GPIO4=CS.
+
+All attempts failed with SdFat error 0x17 (CMD0 — card never responded) and
+crashes in `spiTransferByteNL`. Tried SdFat and SD.h libraries, FAT32 and
+exFAT formats, multiple pin combinations, two different SD modules.
+
+SPI loopback test (MOSI jumpered to MISO) passed — confirming SPI hardware
+works. The problem is pin-level.
+
+Investigation confirmed: GPIO6/7 are internal flash SPI pins (reserved in all
+modes). GPIO4–7 are JTAG reserved. GPIO0/2 are strapping pins. After
+subtracting shared bus (GPIO8/9) and OLED (GPIO3/10), there are not enough
+clean GPIOs for 4 SPI signals on the ESP32-C3 SuperMini.
+
+**Resolution:** Replaced MCU #3 ESP32-C3 SuperMini with an ESP32 DevKit
+(ESP32-D0WDQ6, 38-pin) from the parts stash. Headers soldered, board
+recognized on /dev/ttyUSB0 via CH340C. New SPI pin mapping:
+GPIO19=MISO, GPIO23=MOSI, GPIO18=SCK, GPIO5=CS. OLED moved to GPIO16/17.
+
+**Consequence for shared_config.h:** `OLED_SDA_PIN` and `OLED_SCL_PIN` moved
+from `shared_config.h` to per-MCU `config.h` since they are no longer universal.
+MCUs #1/#2/#4/#5 keep GPIO3/10. MCU #3 uses GPIO16/17.
+
+SD card formatted: FAT32, 8GB partition on 64GB physical card (FAT32 volumes
+over 32GB are unreliable with Arduino SD libraries — remainder left unallocated).
+
+SD init test not yet run on new board — carried over to next session.
+
+---
+
+### Key learnings
+
+- **Resistors are not wire bridges.** Pull-up resistors have resistance — using
+  them as physical connectors between breadboard halves puts 5kΩ in series on
+  the I2C signal path, corrupting signals for MCUs on the far side.
+
+- **ESP32-C3 SuperMini GPIO budget is extremely tight.** 11 exposed pins minus
+  strapping pins, JTAG pins, and flash SPI pins leaves very few truly free GPIOs.
+  Running shared I2C bus + OLED + SPI simultaneously is not feasible.
+
+- **"Newer and smaller" is not always better.** The ESP32 classic (2016) has
+  more free GPIOs than the ESP32-C3 SuperMini (2020) for general-purpose use.
+  The C3 was designed for single-purpose IoT nodes, not multi-peripheral projects.
+
+- **SPI loopback test is the correct first step** for isolating SD card issues.
+  It confirms SPI hardware works before suspecting the SD module or card.
+
+- **SD card size matters for library compatibility.** Cards over 32GB formatted
+  as FAT32 are out of spec. SdFat with exFAT on ESP32 is unstable. Use a ≤32GB
+  card or create a ≤8GB FAT32 partition.
+
+- **Daisy chain GND** across all breadboards is essential. Missing common ground
+  causes I2C devices to appear deaf even when SDA/SCL are correctly wired.
+
+---
+
+### Documentation updated this session
+
+- ADR-008: ESP32 DevKit replaces ESP32-C3 SuperMini for MCU #3
+- shared_config.h: OLED pins removed (moved to per-MCU config.h)
+- config.h: all 5 MCUs updated with local OLED pin definitions
+- MCU #3 platformio.ini: board=esp32dev, port=/dev/ttyUSB0
+- MCU #3 CLAUDE.md: hardware change, new pins, Phase 3 implementation steps
+- roadmap.md: Phase 3 reordered by dependency, Phase 5 RAID-1 added
