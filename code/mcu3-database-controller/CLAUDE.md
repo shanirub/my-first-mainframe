@@ -3,28 +3,28 @@
 ## Identity
 - I2C address on shared bus: 0x0A
 - Role: account storage — SD card read/write, balance queries, transaction log
-- Board: ESP32 DevKit (ESP32-D0WDQ6, 38-pin) — replaced ESP32-C3 SuperMini (see ADR-008)
+- Board: WeMos LOLIN32 Lite clone (ESP32-D0WDQ6, CH340C) — replaced ESP32-C3 SuperMini (see ADR-008)
 - upload_port = /dev/ttyUSB0
 - monitor_port = /dev/ttyUSB0
 
 ## Hardware Note
-MCU #3 was migrated from ESP32-C3 SuperMini to ESP32 DevKit because the
+MCU #3 was migrated from ESP32-C3 SuperMini to WeMos LOLIN32 Lite because the
 SuperMini has insufficient free GPIOs to run shared bus + OLED + SPI SD card
 simultaneously. GPIO4–7 are JTAG reserved, GPIO6/7 are flash SPI pins,
 GPIO0/2 are strapping pins — leaving too few clean GPIOs for all four
 peripherals. See ADR-008 for full reasoning.
 
 ## Pin Configuration
-| Function | GPIO | Notes |
-|---|---|---|
-| Shared bus SDA | GPIO8 | Matches all other MCUs — hub wiring unchanged |
-| Shared bus SCL | GPIO9 | Matches all other MCUs — hub wiring unchanged |
-| OLED SDA | GPIO16 | U8g2 SW I2C |
-| OLED SCL | GPIO17 | U8g2 SW I2C |
-| SD MOSI | GPIO23 | ESP32 default SPI2 |
-| SD MISO | GPIO19 | ESP32 default SPI2 |
-| SD SCK | GPIO18 | ESP32 default SPI2 |
-| SD CS | GPIO5 | Free GPIO |
+| Function | GPIO | LOLIN32 Lite label | Notes |
+|---|---|---|---|
+| Shared bus SDA | GPIO8 | GPIO8 | Matches all other MCUs — hub wiring unchanged |
+| Shared bus SCL | GPIO9 | GPIO9 | Matches all other MCUs — hub wiring unchanged |
+| OLED SDA | GPIO16 | RXD2 | U8g2 SW I2C — free, no special functions |
+| OLED SCL | GPIO17 | TXD2 | U8g2 SW I2C — free, no special functions |
+| SD MOSI | GPIO23 | V_SPI_D / MOSI | ESP32 default VSPI MOSI |
+| SD MISO | GPIO19 | V_SPI_Q / MISO | ESP32 default VSPI MISO |
+| SD SCK  | GPIO18 | V_SPI_CLK / SCK | ESP32 default VSPI SCK |
+| SD CS   | GPIO5  | V_SPI_CS0 / SS  | ESP32 default VSPI CS — onboard LED on this pin, will flicker during SPI (cosmetic only) |
 
 ## SD Card
 - Library: Arduino SD.h (not SdFat — unstable on ESP32-C3, not tested needed on DevKit)

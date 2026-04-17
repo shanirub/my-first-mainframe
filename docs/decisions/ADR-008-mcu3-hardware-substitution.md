@@ -1,4 +1,4 @@
-# ADR-008: ESP32 DevKit replaces ESP32-C3 SuperMini for MCU #3
+# ADR-008: WeMos LOLIN32 Lite replaces ESP32-C3 SuperMini for MCU #3
 
 ## Status
 Accepted — 2026-04-16
@@ -10,10 +10,10 @@ Accepted — 2026-04-16
 - ESP32-C3 Technical Reference Manual: https://www.espressif.com/sites/default/files/documentation/esp32-c3_technical_reference_manual_en.pdf
 - ESP32-C3-MINI-1 Module Datasheet: https://documentation.espressif.com/esp32-c3-mini-1_datasheet_en.pdf
 
-**ESP32-D0WDQ6 (replacement board):**
-- ESP32 Series Datasheet (covers D0WDQ6): https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf
+**WeMos LOLIN32 Lite (replacement board):**
+- ESP32 Series Datasheet (covers ESP32-D0WDQ6): https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf
 - ESP32 Technical Reference Manual: https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf
-- ESP32-WROOM-32 Module Datasheet (38-pin DevKit): https://www.espressif.com/sites/default/files/documentation/esp32-wroom-32_datasheet_en.pdf
+- WeMos LOLIN32 Lite pinout and specs (Mischianti): https://mischianti.org/esp32-wemos-lolin32-lite-high-resolution-pinout-and-specs/
 
 ---
 
@@ -52,12 +52,12 @@ exactly 4 pins for 4 SPI signals, with zero margin.
 In practice, extensive testing confirmed the chip does not behave reliably
 with user SPI on these pins in combination:
 
+- **GPIO6/7 combination (first attempt):** confirmed dead — internal flash
+  pins show 0V externally regardless of firmware configuration
 - **GPIO5/20 combination:** SdFat error 0x17 (CMD0 — card never responded),
   crashes in `spiTransferByteNL` and `cpu_ll_waiti`
 - **GPIO0/1 combination:** same CMD0 failure; additionally GPIO0 affected
   boot mode (boot:0xe vs expected boot:0xf)
-- **GPIO6/7 combination (first attempt):** confirmed dead — internal flash
-  pins show 0V externally regardless of firmware configuration
 
 A SPI loopback test (MOSI jumpered to MISO) passed on all combinations,
 confirming the SPI2 peripheral hardware itself is functional. The failure
@@ -79,33 +79,39 @@ silicon-level constraint exposed through testing, not a firmware issue.
 
 ## Decision
 
-Replace the ESP32-C3 SuperMini with an ESP32 DevKit (ESP32-D0WDQ6, 38-pin)
-for MCU #3 only. All other MCUs remain as ESP32-C3 SuperMini.
+Replace the ESP32-C3 SuperMini with a **WeMos LOLIN32 Lite** (or compatible
+clone — the original is discontinued) for MCU #3 only. The board in use is
+a clone based on the ESP32-D0WDQ6 chip with CH340C USB-to-serial, PCB
+antenna, single RST button, and JST LiPo connector. All other MCUs remain
+as ESP32-C3 SuperMini.
 
 MCU #3 retains its I2C address (0x0A), subsystem role (Database Controller),
 and firmware architecture (FreeRTOS tasks, SharedBus, MessageProtocol).
 Only the hardware and pin assignments change.
 
-The ESP32-D0WDQ6 has 34 GPIO pins. Per the ESP32 Series Datasheet and
-ESP32-WROOM-32 Module Datasheet, the VSPI bus (SPI3) uses GPIO5, GPIO18,
-GPIO19, GPIO21–GPIO23 via the IO MUX — clean general-purpose pins with no
-flash or JTAG conflicts. This gives ample headroom for all four peripherals
-with no conflicts.
+The LOLIN32 Lite breaks out the ESP32's VSPI bus with explicit labels on the
+PCB (V_SPI_CLK, V_SPI_Q/MISO, V_SPI_D/MOSI, V_SPI_CS0/SS) — clean
+general-purpose pins confirmed against the board pinout with no flash or
+JTAG conflicts. This gives ample headroom for all four peripherals.
+
+**Note:** GPIO5 has an onboard blue LED on the LOLIN32 Lite (labeled
+V_SPI_CS0/SS on the pinout). Using GPIO5 as SD CS means the LED will
+flicker during SPI activity. This is cosmetic — it does not affect function.
 
 ---
 
 ## New pin assignments for MCU #3
 
-| Function | GPIO | Notes |
-|---|---|---|
-| Shared bus SDA | GPIO8 | Matches all other MCUs — hub wiring unchanged |
-| Shared bus SCL | GPIO9 | Matches all other MCUs — hub wiring unchanged |
-| OLED SDA | GPIO16 | U8g2 SW I2C — free, no special functions |
-| OLED SCL | GPIO17 | U8g2 SW I2C — free, no special functions |
-| SD MOSI | GPIO23 | ESP32 default VSPI MOSI |
-| SD MISO | GPIO19 | ESP32 default VSPI MISO |
-| SD SCK | GPIO18 | ESP32 default VSPI SCK |
-| SD CS | GPIO5 | Free GPIO, no special function |
+| Function | GPIO | LOLIN32 Lite label | Notes |
+|---|---|---|---|
+| Shared bus SDA | GPIO8 | GPIO8 | Matches all other MCUs — hub wiring unchanged |
+| Shared bus SCL | GPIO9 | GPIO9 | Matches all other MCUs — hub wiring unchanged |
+| OLED SDA | GPIO16 | RXD2 | U8g2 SW I2C — free, no special functions |
+| OLED SCL | GPIO17 | TXD2 | U8g2 SW I2C — free, no special functions |
+| SD MOSI | GPIO23 | V_SPI_D / MOSI | ESP32 default VSPI MOSI |
+| SD MISO | GPIO19 | V_SPI_Q / MISO | ESP32 default VSPI MISO |
+| SD SCK  | GPIO18 | V_SPI_CLK / SCK | ESP32 default VSPI SCK |
+| SD CS   | GPIO5  | V_SPI_CS0 / SS  | ESP32 default VSPI CS — onboard LED on this pin |
 
 ---
 
@@ -119,8 +125,8 @@ to each MCU's local `config.h`.
 MCUs #1, #2, #4, #5 keep GPIO3=SDA, GPIO10=SCL as before.
 MCU #3 uses GPIO16=SDA, GPIO17=SCL.
 
-GPIO3 on the ESP32 DevKit is RX0 (UART0 receive). GPIO10 is connected to the
-internal flash SPI interface. Both are unsafe for OLED use on this board.
+GPIO3 on the LOLIN32 Lite is RX0 (UART0 receive). GPIO10 is connected to
+the internal flash SPI interface. Both are unsafe for OLED use on this board.
 
 `shared_config.h` continues to own all values that are truly shared: shared
 bus pins (GPIO8/9), MCU addresses, FreeRTOS stack sizes, and heartbeat timing.
@@ -133,7 +139,7 @@ The Arduino `SD.h` library is used for MCU #3. SdFat exhibited unstable
 behaviour during the ESP32-C3 debugging process — crashes in
 `spiTransferByteNL` across multiple pin combinations — though this may have
 been a consequence of the pin conflicts rather than a library incompatibility.
-SD.h with FAT32 on the ESP32 DevKit is the proven path forward.
+SD.h with FAT32 on the LOLIN32 Lite is the proven path forward.
 
 SD card is formatted as FAT32 with an 8GB partition on a 64GB physical card.
 FAT32 volumes over 32GB are not reliably supported by SD.h or SdFat. The
@@ -144,11 +150,11 @@ remaining ~56GB is unallocated. For this project, MCU #3 needs only a few MB.
 ## Consequences
 
 - MCU #3 breadboard replaced with a larger breadboard to accommodate the
-  ESP32 DevKit form factor and leave space for a second SD card module
+  LOLIN32 Lite form factor and leave space for a second SD card module
   (planned for Phase 5 RAID-1 storage redundancy — hardware already available)
 - The original ESP32-C3 SuperMini that was MCU #3 is retained for possible
   future use
-- platformio.ini for MCU #3 updated: board = esp32dev, upload/monitor port
-  = /dev/ttyUSB0 (CH340C USB-to-serial bridge on the DevKit)
+- platformio.ini for MCU #3: board = esp32dev, upload/monitor port =
+  /dev/ttyUSB0 (CH340C USB-to-serial bridge on the board)
 - OLED pin constants moved from shared_config.h to per-MCU config.h
 - All other MCU firmware, shared libraries, and physical wiring unchanged
