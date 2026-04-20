@@ -1,71 +1,97 @@
 #include <Arduino.h>
 #include <SPI.h>
-#include <SD.h>
+#include <SdFat.h>
 #include "config.h"
 #include "oled_display.h"
 
-/* OledDisplay oled(OLED_SDA_PIN, OLED_SCL_PIN);
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Globals
+// ─────────────────────────────────────────────────────────────────────────────
+OledDisplay oled(OLED_SDA_PIN, OLED_SCL_PIN);
+SdExFat     sd;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sdTest — SD init + round-trip write/read test.
+// ─────────────────────────────────────────────────────────────────────────────
+void sdTest() {
+    Serial.println("[MCU3-SD] Starting SD init test...");
+
+    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, -1);
+
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
+    delay(500);
+
+    SdSpiConfig sdConfig(SD_CS_PIN, DEDICATED_SPI, SD_SCK_MHZ(1));
+    
+    if (!sd.begin(sdConfig)) {
+        Serial.println("[MCU3-SD] FAIL — sd.begin() returned false");
+        Serial.printf("[MCU3-SD] SdFat error code: 0x%02X, data: 0x%02X\n",
+            sd.sdErrorCode(), sd.sdErrorData());
+        Serial.printf("[MCU3-SD] Pins: MISO=GPIO%d MOSI=GPIO%d SCK=GPIO%d CS=GPIO%d\n",
+            SD_MISO_PIN, SD_MOSI_PIN, SD_SCK_PIN, SD_CS_PIN);
+        oled.showStatus("DATABASE CTRL", "SD: FAIL", "see serial", "");
+        return;
+    }
+    Serial.println("[MCU3-SD] sd.begin() OK");
+
+    switch (sd.card()->type()) {
+        case SD_CARD_TYPE_SD1:  Serial.println("[MCU3-SD] Card type: SD1");  break;
+        case SD_CARD_TYPE_SD2:  Serial.println("[MCU3-SD] Card type: SD2");  break;
+        case SD_CARD_TYPE_SDHC: Serial.println("[MCU3-SD] Card type: SDHC"); break;
+        default:                Serial.println("[MCU3-SD] Card type: unknown"); break;
+    }
+    Serial.printf("[MCU3-SD] Card size: %lu MB\n",
+        sd.card()->sectorCount() / 2048);
+
+    // Write
+    ExFile f;
+    if (!f.open("test.txt", O_WRONLY | O_CREAT | O_TRUNC)) {
+        Serial.println("[MCU3-SD] FAIL — could not open test.txt for write");
+        oled.showStatus("DATABASE CTRL", "SD: FAIL", "write failed", "");
+        return;
+    }
+    f.print("sd_round_trip_ok");
+    f.close();
+    Serial.println("[MCU3-SD] write OK");
+
+    // Read back
+    if (!f.open("test.txt", O_RDONLY)) {
+        Serial.println("[MCU3-SD] FAIL — could not open test.txt for read");
+        oled.showStatus("DATABASE CTRL", "SD: FAIL", "read failed", "");
+        return;
+    }
+    char readBuf[32] = {0};
+    int  n = f.read(readBuf, sizeof(readBuf) - 1);
+    readBuf[n] = '\0';
+    f.close();
+    Serial.printf("[MCU3-SD] read back: \"%s\"\n", readBuf);
+
+    if (strcmp(readBuf, "sd_round_trip_ok") == 0) {
+        Serial.println("[MCU3-SD] PASS — round-trip verified");
+        oled.showStatus("DATABASE CTRL", "SD: PASS", "round-trip OK", "");
+    } else {
+        Serial.println("[MCU3-SD] FAIL — read-back does not match written data");
+        oled.showStatus("DATABASE CTRL", "SD: FAIL", "mismatch", "");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setup
+// ─────────────────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("[MCU3-SD] SD card init test starting");
+    Serial.println("[MCU3] Database Controller starting — SD test");
 
-/*     if (!oled.begin()) {
-        Serial.println("[MCU3-SD] OLED failed");
+    if (!oled.begin()) {
+        Serial.println("[MCU3] OLED failed");
     }
-    oled.showStatus("DATABASE CTRL", "SD test...", "", ""); */
+    oled.showStatus("DATABASE CTRL", "SD test...", "", "");
 
-    // Explicitly configure SPI pins before SD.begin().
-    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-
-    // SD.begin() takes only the CS pin — SPI bus already configured above.
-    if (!SD.begin(SD_CS_PIN)) {
-        Serial.println("[MCU3-SD] FAIL: SD init failed — check wiring");
-        Serial.printf("[MCU3-SD] Check: MISO=GPIO%d, MOSI=GPIO%d, SCK=GPIO%d, CS=GPIO%d\n",
-            SD_MISO_PIN, SD_MOSI_PIN, SD_SCK_PIN, SD_CS_PIN);
-        Serial.printf("[MCU3-SD] Card type: %d\n", SD.cardType());
-/*         oled.showStatus("DATABASE CTRL", "SD: FAIL", "Check wiring", "");
- */        return;
-    }
-
-    Serial.println("[MCU3-SD] PASS: SD card initialized");
-
-    // Print card size in MB.
-    uint64_t cardSizeMB = SD.cardSize() / (1024 * 1024);
-    Serial.printf("[MCU3-SD] Card size: %llu MB\n", cardSizeMB);
-
-    // Try writing a test file.
-    File testFile = SD.open("/test.txt", FILE_WRITE);
-    if (!testFile) {
-        Serial.println("[MCU3-SD] FAIL: could not create test.txt");
-/*         oled.showStatus("DATABASE CTRL", "SD: FAIL", "Write failed", "");
- */        return;
-    }
-    testFile.println("MCU3 SD test OK");
-    testFile.close();
-    Serial.println("[MCU3-SD] PASS: test.txt written successfully");
-
-    // Try reading it back.
-    File readFile = SD.open("/test.txt");
-    if (!readFile) {
-        Serial.println("[MCU3-SD] FAIL: could not read test.txt back");
-/*         oled.showStatus("DATABASE CTRL", "SD: FAIL", "Read failed", "");
- */        return;
-    }
-    char buf[32];
-    memset(buf, 0, sizeof(buf));
-    int n = 0;
-    while (readFile.available() && n < (int)sizeof(buf) - 1) {
-        buf[n++] = readFile.read();
-    }
-    readFile.close();
-    Serial.printf("[MCU3-SD] PASS: read back: %s\n", buf);
-
-    Serial.println("[MCU3-SD] ALL PASS: SD card wiring confirmed good");
-/*     oled.showStatus("DATABASE CTRL", "SD: PASS", "Wiring OK", "");
- */}
+    sdTest();
+}
 
 void loop() {
-    vTaskDelete(NULL);
+    // nothing — no FreeRTOS tasks, no vTaskDelete needed
 }

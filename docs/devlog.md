@@ -759,3 +759,85 @@ SD init test not yet run on new board — carried over to next session.
 - MCU #3 platformio.ini: board=esp32dev, port=/dev/ttyUSB0
 - MCU #3 CLAUDE.md: hardware change, new pins, Phase 3 implementation steps
 - roadmap.md: Phase 3 reordered by dependency, Phase 5 RAID-1 added
+
+---
+
+### SD card integration — WeMos LOLIN32 Lite GPIO8/9 unavailability
+
+Previous session ended with ESP32 DevKit (first replacement for MCU #3)
+unresolved. Board was actually a WeMos LOLIN32 Lite clone (ESP32-D0WDQ6,
+CH340C) — listing was misleading.
+
+Attempted SD card init test on LOLIN32 Lite with SdFat library.
+Wiring: GPIO19=MISO, GPIO23=MOSI, GPIO18=SCK, GPIO5=CS.
+
+Failures observed across multiple sessions:
+- SdFat error 0x17 (CMD0 — card not responding) — intermittent
+- SdFat error 0x0C (CMD8 — voltage check failed) — after MOSI/MISO swap
+- SdFat error 0x01 (CMD1 timeout) — after breadboard bypass with direct jumpers
+
+Debugging steps taken:
+- Verified continuity on all 6 SD module wires
+- Bypassed breadboard entirely with direct dupont jumpers — eliminated
+  contact noise, errors became consistent
+- Tried SD.h and SdFat libraries, multiple card formats (partitioned FAT32,
+  raw FAT32 full device)
+- Removed FreeRTOS and SharedBus entirely from test sketch — isolated SD
+  test to bare minimum (OLED + SD only)
+- Confirmed crystal anomaly: esptool reports 41.36MHz vs expected 40MHz —
+  explains junk Serial output before app starts, cosmetic only
+
+Root cause identified: **GPIO8 and GPIO9 are not available on the LOLIN32
+Lite.** Per the board pinout, these pins are connected to the 32kHz crystal
+oscillator (Xtal32N/Xtal32P) — they are internal and not broken out for
+user GPIO. The shared inter-MCU I2C bus requires GPIO8=SDA and GPIO9=SCL
+on all MCUs. This makes the LOLIN32 Lite fundamentally incompatible with
+the project's shared bus architecture, regardless of the SD card outcome.
+
+**Resolution:** Ordered ESP32-WROOM-32 DevKit (38-pin, CP2102, Type-C USB).
+This board has GPIO8/9 available as user GPIO, confirmed via official pinout.
+VSPI pins (18/19/23/5) are clean for SD card. All pin assignments from
+config.h remain unchanged — only the physical board changes.
+
+Also ordered:
+- ESP32 Terminal Adapter (screw terminals) — eliminates breadboard contact
+  failures that caused intermittent SD errors throughout this session
+- Second SD card module (identical) — for Phase 5 RAID-1 implementation
+
+Waiting for delivery. No firmware changes required on arrival — main.cpp,
+config.h, and platformio.ini are all correct for esp32dev target.
+
+---
+
+### Key learnings
+
+- **GPIO8/9 are crystal pins on LOLIN32 Lite** — not available for user I2C.
+  Always verify GPIO8/9 availability on any ESP32 board before ordering for
+  this project. The shared bus depends on them across all MCUs.
+
+- **Breadboard contact failures are insidious.** Errors were inconsistent and
+  changed with every reboot — classic intermittent contact symptom. Direct
+  jumper wiring immediately gave consistent error codes, enabling real
+  diagnosis. Terminal adapters eliminate this class of problem entirely.
+
+- **Crystal frequency deviation on clones causes Serial junk.** The 41.36MHz
+  vs 40MHz crystal on the LOLIN32 Lite clone produces garbled boot ROM output.
+  App Serial output is clean after calibration. Cosmetic only, not a bug.
+
+- **SdFat error codes are diagnostic.** 0x17=CMD0 (no response), 0x0C=CMD8
+  (voltage check), 0x01=CMD1 (legacy init timeout). Progression from 0x17
+  toward 0x01 indicates improving signal quality — useful for isolating
+  wiring vs. firmware vs. formatting issues.
+
+- **"ESP32 DevKit" AliExpress listings are unreliable.** The board received
+  was a LOLIN32 Lite clone despite "DevKit" in the listing. Always verify
+  the module silkscreen and pinout before assuming GPIO availability.
+
+---
+
+### Documentation updated this session
+
+- ADR-008: LOLIN32 Lite failure documented, ESP32-WROOM-32 DevKit selected
+- MCU #3 CLAUDE.md: board updated to ESP32-WROOM-32 DevKit 38-pin
+- Project CLAUDE.md: hardware table updated
+- devlog: this entry

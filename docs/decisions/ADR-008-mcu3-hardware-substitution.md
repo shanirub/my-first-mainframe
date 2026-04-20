@@ -1,7 +1,7 @@
 # ADR-008: WeMos LOLIN32 Lite replaces ESP32-C3 SuperMini for MCU #3
 
 ## Status
-Accepted — 2026-04-16
+Accepted — 2026-04-16, amended 2026-04-18
 
 ## Reference Documents
 
@@ -158,3 +158,31 @@ remaining ~56GB is unallocated. For this project, MCU #3 needs only a few MB.
   /dev/ttyUSB0 (CH340C USB-to-serial bridge on the board)
 - OLED pin constants moved from shared_config.h to per-MCU config.h
 - All other MCU firmware, shared libraries, and physical wiring unchanged
+
+## Amendment — 2026-04-18: WeMos LOLIN32 Lite also replaced
+
+The board received and soldered as "ESP32 DevKit" was in fact a **WeMos
+LOLIN32 Lite clone** (ESP32-D0WDQ6, CH340C, PCB antenna). The AliExpress
+listing was misleading.
+
+The LOLIN32 Lite was found to be incompatible with this project for a
+different but equally fundamental reason: **GPIO8 and GPIO9 are connected
+to the 32kHz crystal oscillator (Xtal32N/Xtal32P) on this board and are
+not available as user GPIO.** The shared inter-MCU I2C bus requires
+GPIO8=SDA and GPIO9=SCL on all MCUs — this is a hard architectural
+constraint documented in shared_config.h and the hub wiring.
+
+SD card debugging was also attempted on this board. Consistent SdFat
+errors (0x17, 0x0C, 0x01) were observed. Breadboard contact failures
+caused intermittent behavior masking the real errors. After bypassing
+the breadboard with direct jumpers, errors became consistent (0x01 /
+CMD1 timeout) but the GPIO8/9 issue made the board a dead end regardless.
+
+**Second replacement: ESP32-WROOM-32 DevKit (38-pin, CP2102, Type-C USB)**
+This board has GPIO8/9 confirmed available as user GPIO per the official
+Espressif pinout. All other pin assignments (OLED GPIO16/17, SD card
+GPIO18/19/23/5, shared bus GPIO8/9) remain identical. PlatformIO target
+remains `board = esp32dev`. No firmware changes required.
+
+An ESP32 Terminal Adapter (screw terminals) has also been ordered to
+eliminate breadboard contact failures permanently for MCU #3.

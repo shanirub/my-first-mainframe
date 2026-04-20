@@ -6,7 +6,7 @@ representing a distinct subsystem communicating over a shared I2C bus.
 Built on Fedora Linux with VS Code + PlatformIO.
 
 ## Hardware
-- MCUs: 4× ESP32-C3 SuperMini (#1, #2, #4, #5) + 1× ESP32 DevKit (#3, see ADR-008)
+- MCUs: 4× ESP32-C3 SuperMini (#1, #2, #4, #5) + 1× ESP32-WROOM-32 DevKit (38-pin, CP2102) (#3, see ADR-008)
 - Displays: 0.96" SSD1306 128×64 OLED, one per MCU
 - Breadboards: 2× long (64-row), 3× short (30-row) + 1× large for MCU #3, T-shape on 30×30cm wood base
 - Logic analyzer: 8-channel 24MHz (PulseView/Sigrok)
@@ -41,7 +41,7 @@ for OLED. GPIO16/17 are clean general-purpose pins. See ADR-008.
 |-----|------|-------|-------------|----------|
 | #1 | Master Console | ESP32-C3 SuperMini | 0x08 | usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B1:F1:74-if00 |
 | #2 | Transaction Processor | ESP32-C3 SuperMini | 0x09 | usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:B0:C9:CC-if00 |
-| #3 | Database Controller | ESP32 DevKit | 0x0A | /dev/ttyUSB0 (CH340C) |
+| #3 | Database Controller | ESP32-WROOM-32 DevKit (38-pin, CP2102) | 0x0A | /dev/ttyUSB0 (CH340C) |
 | #4 | Job Scheduler | ESP32-C3 SuperMini | 0x0B | usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:AF:AB:94-if00 |
 | #5 | I/O Controller | ESP32-C3 SuperMini | 0x0C | usb-Espressif_USB_JTAG_serial_debug_unit_10:00:3B:AF:5F:A4-if00 |
 
