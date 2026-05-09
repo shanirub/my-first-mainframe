@@ -67,10 +67,27 @@ scheduling, mutexes protect bus access.
 - [x] Migrate MCUs #3, #4, #5 to FreeRTOS task pattern (init() API)
 - [x] Full 5-MCU simultaneous bus test
 - [x] MCU #1: heartbeat task (single sender, all 4 slaves, timestamp-based health tracking)
-- [ ] MCU #3: replace ESP32-C3 SuperMini with ESP32 DevKit (ADR-008) *(board soldered, wired)*
-- [ ] MCU #3: SD card init confirmed on ESP32 DevKit
-- [ ] MCU #3: FreeRTOS skeleton running on ESP32 DevKit (heartbeat ACK confirmed)
-- [ ] MCU #3: SD task implemented (accounts.json read/write + transactions.log)
+
+**MCU #3 + RPi DB backend** *(ADR-009 — SD card approach superseded)*
+> SD card storage abandoned after three board replacements and exhaustive
+> SPI debugging. MCU #3 remains on shared bus at 0x0A; storage delegated
+> to Raspberry Pi 3B+ over UART. See ADR-009 and raspi-db-server/CLAUDE.md.
+
+- [x] MCU #3: ESP32-WROOM-32 DevKit confirmed on /dev/ttyUSB0, OLED working
+- [ ] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
+- [ ] RPi: UART echo server running on ttyAMA0 (GPIO14/15)
+- [ ] MCU #3: UART loopback test (GPIO18→GPIO19) — Serial2 round-trip confirmed
+- [ ] MCU #3 + RPi: UART echo round-trip confirmed (MCU sends, RPi echoes back)
+- [ ] MCU #3: FreeRTOS skeleton running — heartbeat ACK confirmed on 5-MCU bus
+- [ ] RPi: db_server.py — DB_READ handler (SQLite accounts table, balance query)
+- [ ] MCU #3: DB_READ flow end-to-end — MCU #2 receives correct balance
+- [ ] RPi: db_server.py — DB_WRITE handler (write-ahead log, balance update)
+- [ ] MCU #3: DB_WRITE flow end-to-end — MCU #2 receives DB_WRITE_ACK
+- [ ] MCU #3: UART timeout handling — RPi-down returns Status::TIMEOUT within 500ms
+- [ ] RPi: web_server.py — Flask transaction history table at :5000
+- [ ] RPi: rsync cron job — SQLite backup to dev PC every 10 minutes
+
+**Remaining MCUs**
 - [ ] MCU #2: sequential transaction handling — one transaction at a time (Option A)
 - [ ] MCU #4: immediate job dispatch — receive JOB_SUBMIT, dispatch to MCU #2 immediately
 - [ ] MCU #5: WiFi/HTTP server task, web console (single pending request slot), I2C logic task
@@ -99,8 +116,10 @@ scheduling, mutexes protect bus access.
 ## Phase 5 — Advanced Features
 
 - [ ] Atomic TRANSFER transactions (two-phase commit across MCU #2 and MCU #3)
-- [ ] Crash recovery — MCU #3 replays incomplete transactions from write-ahead log on boot
-- [ ] RAID-1 storage redundancy — dual SD card modules on MCU #3, every write mirrored to both cards, read from either. Hardware already available (second SD module in stash). Requires ADR.
+- [ ] Crash recovery — MCU #3 RPi replays PENDING transactions from SQLite log on boot
+- [ ] Storage redundancy — rsync SQLite to dev PC already in place (Phase 3); consider
+      periodic backup to USB stick on RPi for fully offline redundancy. No additional
+      hardware required for basic redundancy.
 - [ ] Load testing — 50 sequential transactions without dropping
 - [ ] Failure simulation — physically disconnect a subsystem, observe timeout and error propagation
 - [ ] Priority job scheduling stress test — mixed HIGH/MEDIUM/LOW queue under load

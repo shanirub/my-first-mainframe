@@ -1,7 +1,12 @@
 # ADR-008: WeMos LOLIN32 Lite replaces ESP32-C3 SuperMini for MCU #3
 
 ## Status
-Accepted — 2026-04-16, amended 2026-04-18
+~~Accepted — 2026-04-16, amended 2026-04-18~~
+**Superseded by ADR-009 — 2026-05-07**
+SD card storage approach abandoned. MCU #3 retained on shared bus; storage
+delegated to Raspberry Pi 3B+ over UART. See ADR-009 for full reasoning.
+
+---
 
 ## Reference Documents
 
@@ -186,3 +191,22 @@ remains `board = esp32dev`. No firmware changes required.
 
 An ESP32 Terminal Adapter (screw terminals) has also been ordered to
 eliminate breadboard contact failures permanently for MCU #3.
+
+## Amendment — 2026-05-07: SD card approach superseded — see ADR-009
+
+SD card debugging continued on the ESP32-WROOM-32 DevKit with SdFat 2.3.1.
+CMD0 eventually passed consistently but CMD8 failed on every attempt with
+data=0xFF (MISO reading idle/floating — card not driving a response).
+Terminal adapter confirmed solid connections. Multiple library configurations,
+card formats, and pin combinations exhausted.
+
+After three board replacements and exhaustive SPI debugging across all of
+them, the conclusion is that the SD card approach has an unacceptable
+reliability cost for this project. The failure mode (CMD8 / voltage check)
+is consistent across boards and wiring configurations, suggesting a deeper
+incompatibility between the SDXC card and the SdFat init sequence that
+is not worth continuing to chase.
+
+**Architecture pivot:** SD card storage abandoned entirely. MCU #3 remains
+on the shared I2C bus at 0x0A but delegates all storage to a Raspberry Pi
+3B+ connected over UART. See ADR-009 for full reasoning and consequences.

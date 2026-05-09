@@ -841,3 +841,173 @@ config.h, and platformio.ini are all correct for esp32dev target.
 - MCU #3 CLAUDE.md: board updated to ESP32-WROOM-32 DevKit 38-pin
 - Project CLAUDE.md: hardware table updated
 - devlog: this entry
+
+## 2026-05-07 — Phase 3: SD card final debugging on ESP32-WROOM-32 DevKit, architecture pivot to RPi UART backend
+
+*Goal: confirm SD card init on new ESP32-WROOM-32 DevKit, proceed to FreeRTOS skeleton*
+
+---
+
+### SD card debugging — ESP32-WROOM-32 DevKit
+
+Previous session ended with ESP32-WROOM-32 DevKit (38-pin, CP2102) ordered
+and on the way — third board for MCU #3 slot. Board arrived confirmed genuine:
+module silkscreen reads ESP-32D (ESP32-D0WDQ6), HW-395 V0.03, Type-C USB,
+pins pre-soldered. Terminal adapter also arrived. Board recognized immediately
+on /dev/ttyUSB0 via CP2102. Stable port ID:
+`usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0`
+
+SD card reformatted from FAT32 to exFAT to match `SdExFat`/`ExFile` types
+already in main.cpp. Two firmware fixes applied before first flash:
+
+1. `SdSpiConfig` was missing `&SPI` as fourth argument — SdFat could fall
+   back to a default SPI instance not initialized with our pin assignments.
+2. `SD_CARD_TYPE_SD1/SD2/SDHC` constants are from SD.h and do not exist in
+   SdFat 2.x — compile error. Replaced switch block with uint8_t ternary.
+
+First flash: OLED initialized correctly. SD init failed with error 0x17
+(CMD0 — card not responding at all).
+
+**Debugging sequence:**
+
+Verified `SPI.begin()` executes (added Serial print). Confirmed CS reads 3.3V
+at idle (correct). Probed SCK during test — reads 0V. Added 5-second delay
+after `SPI.begin()` to probe during init window — SCK still 0V. This initially
+suggested SPI clock not being driven, but later reasoning clarified: 0V on SCK
+is the idle state; the actual transmission window is too brief for a multimeter
+to catch. The probe reading was not evidence of a fault.
+
+Traced wiring color-by-color against terminal adapter labels. All six SD module
+wires confirmed in correct terminals: white(MOSI)→P23, blue(MISO)→P19,
+orange(SCK)→P18, green(CS)→P5, red(VCC)→3.3V rail, black(GND)→GND.
+
+Error codes were varying between resets: 0x17 (CMD0), 0x0C (CMD8), 0x01
+(CMD1) — the classic symptom of intermittent connection. Pressing blue wire
+(MISO, P19) during reset made errors worse and more variable. Tightened P19
+screw terminal — errors stabilized to consistent 0x0C.
+
+Tried swapping MOSI/MISO (previous sessions confirmed this sometimes helps):
+swapped config gave 0x0C consistently, correct config gave 0x17. This is
+opposite of the previous session's result. The SD module's MOSI/MISO labels
+appear to be from the card's perspective rather than the host's on this module.
+Kept swapped configuration (0x0C is further in init than 0x17).
+
+With stable wiring, error settled to 0x0C (CMD8 — voltage check) with
+`data=0xFF`. The 0xFF data byte means MISO is reading all-ones — idle/floating
+state. The card is not driving any response to CMD8.
+
+Probed MOSI at the SD module during test — reads 0V. However: CMD0 passes
+(0x0C means past CMD0), so MOSI must have been working during CMD0. The 0V
+probe reading is a post-test static measurement, not evidence of a fault
+during transmission.
+
+CMD8 failure with data=0xFF and no progression despite stable wiring
+across multiple resets. Multiple library configurations, card formats,
+and pin combinations have been exhausted across three boards.
+
+---
+
+### Decision: architecture pivot
+
+After three board replacements spanning several weeks and systematic
+exhaustion of wiring, library, and firmware causes, the conclusion is
+that the SD card path has an unacceptable reliability cost.
+
+The failure modes seen across all boards are consistent:
+- ESP32-C3 SuperMini: GPIO budget exhaustion (silicon constraint)
+- WeMos LOLIN32 Lite clone: GPIO8/9 tied to crystal (board constraint)
+- ESP32-WROOM-32 DevKit: CMD8 failure, MISO not driven (init/card constraint)
+
+The third failure is particularly frustrating because it is past the
+hardware-level problems that caused the first two. CMD0 passes, meaning
+the SPI link is functional. But CMD8 fails consistently with data=0xFF,
+suggesting the SDXC card and SdFat's init sequence have an incompatibility
+that has not been resolved despite extensive debugging.
+
+Continuing is not the right call. The DB controller is on the critical path
+for Phase 3 — MCU #2 cannot process transactions without it, MCU #4 and MCU
+#5 cannot be meaningfully tested, and end-to-end flows are blocked. A month
+of debugging time has already been spent on storage alone.
+
+**New approach: MCU #3 stays on shared I2C bus at 0x0A. All storage is
+delegated to a Raspberry Pi 3B+ connected over UART.**
+
+MCU #3 receives DB_READ and DB_WRITE from the shared bus exactly as designed.
+Instead of hitting an SD card, it forwards the request to RPi over UART1
+(GPIO18=TX, GPIO19=RX) using newline-terminated JSON. RPi responds, MCU #3
+returns the result on the bus. No other MCU is affected — they still talk
+to address 0x0A and receive the same message types.
+
+RPi runs:
+- `db_server.py` — UART listener, SQLite read/write, write-ahead log pattern
+- `web_server.py` — Flask transaction history interface
+- Cron rsync to dev PC — periodic SQLite backup over WiFi
+
+This satisfies all original requirements: unbounded transaction history,
+UUID transaction IDs, web interface, write-ahead log for crash recovery.
+It also resolves the storage problem completely without any SPI wiring.
+
+UART at 115200 baud gives ~10ms per round trip on a point-to-point link.
+Total estimated transaction latency including all I2C hops and two UART
+round trips: ~10–12 transactions per second sequential. Acceptable for
+this simulation's purposes.
+
+---
+
+### Pin changes for MCU #3
+
+Former SD card pins GPIO18/19 are now UART1. GPIO23 and GPIO5 are freed.
+
+| Function | GPIO | Before | After |
+|---|---|---|---|
+| UART TX (to RPi) | GPIO18 | SD SCK | UART1 TX |
+| UART RX (from RPi) | GPIO19 | SD MISO | UART1 RX |
+| — | GPIO23 | SD MOSI | unconnected |
+| — | GPIO5 | SD CS | unconnected |
+
+Shared bus (GPIO8/9) and OLED (GPIO16/17) unchanged.
+
+---
+
+### Key learnings
+
+- **Consistent error codes are diagnostic progress, not failure.** Moving
+  from varying 0x17/0x0C/0x01 to stable 0x0C by tightening one screw
+  terminal was real progress — it eliminated contact noise as a variable
+  and isolated the failure to a specific init stage.
+
+- **0xFF on data byte means MISO is floating.** When the card does not
+  drive a response, MISO reads all-ones. This is distinct from a wiring
+  fault — MISO is connected, but the card is not asserting anything.
+
+- **Multimeter voltage probing during fast SPI is unreliable.** A multimeter
+  averages over time. SCK toggling at 1MHz during a brief init burst will
+  read somewhere between 0V and 3.3V, or 0V if the burst has already ended.
+  It does not confirm or deny whether SPI is active.
+
+- **Architectural pivots are sometimes the right call.** The SD card approach
+  had legitimate reasons behind it — low cost, no extra hardware, self-contained.
+  But the accumulated evidence across three boards and multiple sessions pointed
+  to a consistent incompatibility that was not going to be resolved by more
+  debugging. Cutting losses and redesigning around reliable components
+  (RPi + UART) is the correct engineering response.
+
+- **UART is simpler and more reliable than SPI for point-to-point links.**
+  No chip select, no clock polarity/phase configuration, no library-level
+  init sequence. Two wires and newline framing. The perceived complexity
+  of "adding a Raspberry Pi" is offset by eliminating an entire class of
+  hardware debugging.
+
+---
+
+### Documentation updated this session
+
+- ADR-008: amended — SD card approach superseded, points to ADR-009
+- ADR-009: new — UART/RPi architecture decision, protocol, repo structure
+- MCU #3 CLAUDE.md: rewritten — UART task replaces SD task, new pin table,
+  new Phase 3 implementation steps with clear DoD per step
+- raspi-db-server/CLAUDE.md: new — RPi setup, UART protocol, SQLite schema,
+  Flask, rsync, step-by-step DoD
+- roadmap.md: Phase 3 MCU #3 items rewritten around RPi steps, Phase 5
+  RAID-1 SD item replaced with SQLite rsync redundancy
+- devlog: this entry
