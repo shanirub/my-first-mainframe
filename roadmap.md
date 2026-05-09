@@ -74,8 +74,8 @@ scheduling, mutexes protect bus access.
 > to Raspberry Pi 3B+ over UART. See ADR-009 and raspi-db-server/CLAUDE.md.
 
 - [x] MCU #3: ESP32-WROOM-32 DevKit confirmed on /dev/ttyUSB0, OLED working
-- [ ] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
-- [ ] RPi: UART echo server running on ttyAMA0 (GPIO14/15)
+- [X] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
+- [X] RPi: UART echo server running on ttyAMA0 (GPIO14/15)
 - [ ] MCU #3: UART loopback test (GPIO18→GPIO19) — Serial2 round-trip confirmed
 - [ ] MCU #3 + RPi: UART echo round-trip confirmed (MCU sends, RPi echoes back)
 - [ ] MCU #3: FreeRTOS skeleton running — heartbeat ACK confirmed on 5-MCU bus
