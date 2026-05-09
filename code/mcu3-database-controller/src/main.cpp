@@ -1,6 +1,4 @@
 #include <Arduino.h>
-#include <SPI.h>
-#include <SdFat.h>
 #include "config.h"
 #include "oled_display.h"
 
@@ -8,71 +6,40 @@
 // Globals
 // ─────────────────────────────────────────────────────────────────────────────
 OledDisplay oled(OLED_SDA_PIN, OLED_SCL_PIN);
-SdExFat     sd;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// sdTest — SD init + round-trip write/read test.
+// uartLoopbackTest — Serial2 round-trip write/read test.
+// Wire GPIO18 (TX) → GPIO19 (RX) before running.
 // ─────────────────────────────────────────────────────────────────────────────
-void sdTest() {
-    Serial.println("[MCU3-SD] Starting SD init test...");
+void uartLoopbackTest() {
+    Serial.println("[MCU3-UART] Starting UART loopback test...");
 
-    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, -1);
+    // UART1 on GPIO18=TX, GPIO19=RX
+    Serial2.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
+    delay(100);
 
-    pinMode(SD_CS_PIN, OUTPUT);
-    digitalWrite(SD_CS_PIN, HIGH);
-    delay(500);
+    const char* testStr = "hello from mcu3\n";
+    Serial2.print(testStr);
 
-    SdSpiConfig sdConfig(SD_CS_PIN, DEDICATED_SPI, SD_SCK_MHZ(1));
-    
-    if (!sd.begin(sdConfig)) {
-        Serial.println("[MCU3-SD] FAIL — sd.begin() returned false");
-        Serial.printf("[MCU3-SD] SdFat error code: 0x%02X, data: 0x%02X\n",
-            sd.sdErrorCode(), sd.sdErrorData());
-        Serial.printf("[MCU3-SD] Pins: MISO=GPIO%d MOSI=GPIO%d SCK=GPIO%d CS=GPIO%d\n",
-            SD_MISO_PIN, SD_MOSI_PIN, SD_SCK_PIN, SD_CS_PIN);
-        oled.showStatus("DATABASE CTRL", "SD: FAIL", "see serial", "");
-        return;
+    // Wait up to 500ms for response
+    unsigned long start = millis();
+    String response = "";
+    while (millis() - start < 500) {
+        if (Serial2.available()) {
+            char c = Serial2.read();
+            response += c;
+            if (c == '\n') break;
+        }
     }
-    Serial.println("[MCU3-SD] sd.begin() OK");
 
-    switch (sd.card()->type()) {
-        case SD_CARD_TYPE_SD1:  Serial.println("[MCU3-SD] Card type: SD1");  break;
-        case SD_CARD_TYPE_SD2:  Serial.println("[MCU3-SD] Card type: SD2");  break;
-        case SD_CARD_TYPE_SDHC: Serial.println("[MCU3-SD] Card type: SDHC"); break;
-        default:                Serial.println("[MCU3-SD] Card type: unknown"); break;
-    }
-    Serial.printf("[MCU3-SD] Card size: %lu MB\n",
-        sd.card()->sectorCount() / 2048);
-
-    // Write
-    ExFile f;
-    if (!f.open("test.txt", O_WRONLY | O_CREAT | O_TRUNC)) {
-        Serial.println("[MCU3-SD] FAIL — could not open test.txt for write");
-        oled.showStatus("DATABASE CTRL", "SD: FAIL", "write failed", "");
-        return;
-    }
-    f.print("sd_round_trip_ok");
-    f.close();
-    Serial.println("[MCU3-SD] write OK");
-
-    // Read back
-    if (!f.open("test.txt", O_RDONLY)) {
-        Serial.println("[MCU3-SD] FAIL — could not open test.txt for read");
-        oled.showStatus("DATABASE CTRL", "SD: FAIL", "read failed", "");
-        return;
-    }
-    char readBuf[32] = {0};
-    int  n = f.read(readBuf, sizeof(readBuf) - 1);
-    readBuf[n] = '\0';
-    f.close();
-    Serial.printf("[MCU3-SD] read back: \"%s\"\n", readBuf);
-
-    if (strcmp(readBuf, "sd_round_trip_ok") == 0) {
-        Serial.println("[MCU3-SD] PASS — round-trip verified");
-        oled.showStatus("DATABASE CTRL", "SD: PASS", "round-trip OK", "");
+    if (response == String(testStr)) {
+        Serial.println("[MCU3-UART] PASS — round-trip verified");
+        Serial.printf("[MCU3-UART] Received: \"%s\"\n", response.c_str());
+        oled.showStatus("DATABASE CTRL", "UART: PASS", "loopback OK", "");
     } else {
-        Serial.println("[MCU3-SD] FAIL — read-back does not match written data");
-        oled.showStatus("DATABASE CTRL", "SD: FAIL", "mismatch", "");
+        Serial.printf("[MCU3-UART] FAIL — sent: \"%s\"\n", testStr);
+        Serial.printf("[MCU3-UART] received: \"%s\"\n", response.c_str());
+        oled.showStatus("DATABASE CTRL", "UART: FAIL", "see serial", "");
     }
 }
 
@@ -82,16 +49,16 @@ void sdTest() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("[MCU3] Database Controller starting — SD test");
+    Serial.println("[MCU3] Database Controller starting — UART loopback test");
 
     if (!oled.begin()) {
         Serial.println("[MCU3] OLED failed");
     }
-    oled.showStatus("DATABASE CTRL", "SD test...", "", "");
+    oled.showStatus("DATABASE CTRL", "UART test...", "", "");
 
-    sdTest();
+    uartLoopbackTest();
 }
 
 void loop() {
-    // nothing — no FreeRTOS tasks, no vTaskDelete needed
+    // nothing
 }

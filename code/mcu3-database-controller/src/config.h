@@ -1,21 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // MCU #3 — Database Controller
 // File: code/mcu3-database-controller/src/config.h
-// Board: ESP32 DevKit (ESP32-D0WDQ6, 38-pin) — see ADR-008
+// Board: ESP32-WROOM-32 DevKit (38-pin, CP2102) — see ADR-008, ADR-009
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 #include "shared_config.h"
 
 #define I2C_ADDRESS     ADDR_DATABASE_CONTROLLER
 
-// OLED private bus (U8g2 software I2C — ESP32 DevKit pins)
-// GPIO3/10 are not safe on ESP32 DevKit (RX0 and flash SPI).
-// GPIO16/17 are clean general-purpose pins with no special functions.
+// OLED private bus (U8g2 software I2C)
 #define OLED_SDA_PIN    16
 #define OLED_SCL_PIN    17
 
-// SD card (SPI — ESP32 DevKit default SPI2 pins)
-#define SD_MOSI_PIN     23
-#define SD_MISO_PIN     19
-#define SD_SCK_PIN      18
-#define SD_CS_PIN       5
+// UART1 — connection to Raspberry Pi DB backend (see ADR-009)
+// RPi GPIO14 (TX) → MCU GPIO19 (RX)
+// RPi GPIO15 (RX) → MCU GPIO18 (TX)
+#define UART_TX_PIN     18
+#define UART_RX_PIN     19
