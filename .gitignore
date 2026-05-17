@@ -1,2 +1,14 @@
 .vscode/
 .idea/
+# PlatformIO build artifacts
+.pio/
+
+# IDF component manager — auto-downloaded, not source
+managed_components/
+
+# sdkconfig is generated from sdkconfig.defaults — don't commit the generated file
+sdkconfig
+sdkconfig.old
+
+# IDF component lockfile — auto-generated
+dependencies.lock
