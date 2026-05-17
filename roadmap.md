@@ -72,18 +72,46 @@ scheduling, mutexes protect bus access.
 > SD card storage abandoned after three board replacements and exhaustive
 > SPI debugging. MCU #3 remains on shared bus at 0x0A; storage delegated
 > to Raspberry Pi 3B+ over UART. See ADR-009 and raspi-db-server/CLAUDE.md.
+>
+> MCU #3 is on ESP32-WROOM-32 (dual-core). Both Arduino Wire slave and
+> i2c_driver_install() in slave mode caused TG1WDT resets on this board.
+> Solution: switch to pioarduino platform (IDF 5.5.x) and use
+> i2c_new_slave_device() — interrupt-driven, no internal task creation.
+> See ADR-010 for full root cause investigation and decision chain.
 
 - [x] MCU #3: ESP32-WROOM-32 DevKit confirmed on /dev/ttyUSB0, OLED working
-- [X] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
-- [X] RPi: UART echo server running on ttyAMA0 (GPIO14/15)
-- [ ] MCU #3: UART loopback test (GPIO18→GPIO19) — Serial2 round-trip confirmed
-- [ ] MCU #3 + RPi: UART echo round-trip confirmed (MCU sends, RPi echoes back)
-- [ ] MCU #3: FreeRTOS skeleton running — heartbeat ACK confirmed on 5-MCU bus
+- [x] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
+- [x] RPi: UART echo server confirmed on ttyAMA0 (GPIO14/15)
+- [x] MCU #3: UART loopback confirmed (GPIO18→GPIO19) — Serial2 round-trip
+- [x] MCU #3 + RPi: UART echo round-trip confirmed (MCU sends, RPi echoes back)
+
+**MCU #3 — Phase 0: Platform**
+- [ ] 0.1 Switch to pioarduino (IDF 5.5.x) — boot test, confirm IDF version in log
+- [ ] 0.2 OLED smoke test — confirm U8g2 HW_I2C works under pioarduino; fall back to SW_I2C if needed
+
+**MCU #3 — Phase 1: Shared Bus Library**
+- [ ] 1.1 i2c_new_slave_device() init — slave at 0x0A on GPIO8/9, no WDT
+- [ ] 1.2 Receive message via ISR callback — raw bytes printed to Serial
+- [ ] 1.3 Send response — i2c_slave_write() ACK, confirmed received by MCU #1
+- [ ] 1.4 Wrap into shared_bus_wroom library — init()/send()/poll() interface matching other MCUs
+
+**MCU #3 — Phase 2: FreeRTOS Skeleton**
+- [ ] 2.1 Receiver + Logic tasks — heartbeat ACK confirmed on 5-MCU bus; DB_READ/DB_WRITE stubbed
+- [ ] 2.2 OLED task — SharedState updates every 500ms under displayMutex
+
+**MCU #3 — Phase 3: UART Subsystem**
+- [ ] 3.1 UART task skeleton — Serial2 init in task context, loopback confirmed
+- [ ] 3.2 RPi round-trip in task context — JSON echo confirmed inside UART task
+- [ ] 3.3 Logic → UART queue wiring — uartQueue/uartResultQueue, 500ms timeout fires on RPi disconnect
+
+**MCU #3 — Phase 4: Full Integration**
+- [ ] 4.1 DB_READ end-to-end — MCU #2 receives correct balance from SQLite via RPi
+- [ ] 4.2 DB_WRITE end-to-end — balance updated in SQLite, DB_WRITE_ACK received by MCU #2
+- [ ] 4.3 Timeout and fault handling — RPi-down returns Status::TIMEOUT within 500ms, clean recovery
+
+**RPi DB backend**
 - [ ] RPi: db_server.py — DB_READ handler (SQLite accounts table, balance query)
-- [ ] MCU #3: DB_READ flow end-to-end — MCU #2 receives correct balance
-- [ ] RPi: db_server.py — DB_WRITE handler (write-ahead log, balance update)
-- [ ] MCU #3: DB_WRITE flow end-to-end — MCU #2 receives DB_WRITE_ACK
-- [ ] MCU #3: UART timeout handling — RPi-down returns Status::TIMEOUT within 500ms
+- [ ] RPi: db_server.py — DB_WRITE handler (write-ahead log, balance update, commit)
 - [ ] RPi: web_server.py — Flask transaction history table at :5000
 - [ ] RPi: rsync cron job — SQLite backup to dev PC every 10 minutes
 

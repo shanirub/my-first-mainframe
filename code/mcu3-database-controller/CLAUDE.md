@@ -17,9 +17,31 @@ UART1 (GPIO18/19) using newline-terminated JSON.
 For full architecture reasoning and hardware debugging history, see:
 - ADR-008: three board replacements, SD card exhaustion
 - ADR-009: UART/RPi decision, protocol, RPi setup requirements
+- ADR-010: platform switch to pioarduino, IDF 5.5.x, i2c_new_slave_device()
 
 For RPi setup steps, Python script design, and SQLite schema, see:
 - code/raspi-db-server/CLAUDE.md
+
+For implementation status and next steps, see the project roadmap:
+- docs/roadmap.md — MCU #3 phases 0–4 with checkboxes
+
+## Platform
+MCU #3 uses **pioarduino** — a community fork of the PlatformIO espressif32
+platform that supports arduino-esp32 3.x (IDF 5.5.x). The official PlatformIO
+platform (espressif32@7.0.1) bundles IDF 4.4.7, which does not have
+i2c_new_slave_device(). Both Arduino Wire slave and i2c_driver_install() in
+slave mode caused TG1WDT resets on this board. The Wire path root cause is
+confirmed by source code — see ADR-010 for full investigation and decision
+chain. i2c_new_slave_device() (IDF 5.2+) is interrupt-driven and creates no
+internal task — this is the correct fix.
+
+platformio.ini platform line:
+```
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip
+```
+
+Other MCUs (#1, #2, #4, #5) remain on espressif32@7.0.1 — MCU #3 is the
+only board that requires pioarduino.
 
 ## Hardware History
 MCU #3 went through three board replacements before reaching this board.
@@ -33,8 +55,8 @@ See ADR-008 for the full account. Short version:
 |---|---|---|
 | Shared bus SDA | GPIO8 | Matches all other MCUs — hub wiring unchanged |
 | Shared bus SCL | GPIO9 | Matches all other MCUs — hub wiring unchanged |
-| OLED SDA | GPIO16 | U8g2 SW I2C |
-| OLED SCL | GPIO17 | U8g2 SW I2C |
+| OLED SDA | GPIO16 | U8g2 HW_I2C (Wire bus 0); fall back to SW_I2C if pioarduino incompatible |
+| OLED SCL | GPIO17 | same |
 | UART TX (to RPi) | GPIO18 | UART1 — RPi GPIO15 (RX) |
 | UART RX (from RPi) | GPIO19 | UART1 — RPi GPIO14 (TX) |
 
@@ -56,34 +78,64 @@ Responses from RPi:
 {"st":0}
 ```
 
-## FreeRTOS Tasks
+## FreeRTOS Task Architecture
 | Task | Priority | Stack | Role |
 |---|---|---|---|
-| Receiver | 3 | STACK_SIZE_RECEIVER | Blocks on rxSemaphore, puts messages on inboundQueue |
-| Logic | 2 | STACK_SIZE_LOGIC | Handles HEARTBEAT→ACK, DB_READ, DB_WRITE |
-| UART | 2 | STACK_SIZE_LOGIC | Owns Serial2 — sends requests to RPi, reads responses |
-| OLED | 1 | STACK_SIZE_OLED | Updates display every 500ms under displayMutex |
+| Receiver | 3 | STACK_SIZE_RECEIVER | Calls sharedBus.poll(), puts messages on inboundQueue |
+| Logic | 2 | STACK_SIZE_LOGIC | Handles HEARTBEAT→ACK, routes DB_READ/DB_WRITE via queues |
+| UART | 2 | STACK_SIZE_LOGIC | Owns Serial2 exclusively — sends requests to RPi, reads responses |
+| OLED | 1 | STACK_SIZE_OLED | Reads SharedState under displayMutex every 500ms |
 
 ## Internal Queues
 | Queue | Producer | Consumer | Depth | Purpose |
 |---|---|---|---|---|
-| inboundQueue | Receiver | Logic | 8 | incoming DB_READ and DB_WRITE requests |
+| inboundQueue | Receiver | Logic | 8 | Decoded bus messages (HEARTBEAT, DB_READ, DB_WRITE) |
 | uartQueue | Logic | UART task | 4 | UART operation requests to RPi |
 | uartResultQueue | UART task | Logic | 4 | UART operation results from RPi |
 
+## Shared Bus Library
+`shared_bus_wroom` — WROOM-specific implementation of the shared bus interface.
+Same API as `shared_bus` (used by ESP32-C3 MCUs): init(), send(), poll().
+Internally uses i2c_new_slave_device() (IDF 5.2+) — interrupt-driven, ISR
+signals a FreeRTOS semaphore which poll() blocks on.
+
+Selected at compile time via `#ifdef MCU_BOARD_WROOM`.
+
 ## Logic Flow
 ```
-receive DB_READ from MCU #2
-→ put UartRequest on uartQueue (op=read, account=...)
-→ block on uartResultQueue with 500ms timeout
-→ on timeout: send DB_READ_RESULT with Status::TIMEOUT to MCU #2
-→ on result: send DB_READ_RESULT with balance to MCU #2
+Receiver calls sharedBus.poll() → blocks on semaphore → ISR fires on message → puts on inboundQueue
 
-receive DB_WRITE from MCU #2
-→ put UartRequest on uartQueue (op=write, account=..., newBalance=..., txnType=..., mid=...)
-→ block on uartResultQueue with 500ms timeout
-→ on timeout: send DB_WRITE_ACK with Status::TIMEOUT to MCU #2
-→ on result: send DB_WRITE_ACK with Status::OK to MCU #2
+Logic wakes on inboundQueue:
+
+  HEARTBEAT from MCU #1:
+  → sharedBus.send(ACK)
+  → update SharedState
+
+  DB_READ from MCU #2:
+  → put UartRequest{op=read, account} on uartQueue
+  → block on uartResultQueue (500ms timeout)
+  → on timeout:  sharedBus.send(DB_READ_RESULT, Status::TIMEOUT)
+  → on result:   sharedBus.send(DB_READ_RESULT, balance)
+  → update SharedState
+
+  DB_WRITE from MCU #2:
+  → put UartRequest{op=write, account, newBalance, txnType, mid} on uartQueue
+  → block on uartResultQueue (500ms timeout)
+  → on timeout:  sharedBus.send(DB_WRITE_ACK, Status::TIMEOUT)
+  → on result:   sharedBus.send(DB_WRITE_ACK, Status::OK)
+  → update SharedState
+
+UART task wakes on uartQueue:
+  → serialize request to JSON
+  → Serial2.println(json)
+  → read until '\n' or 500ms timeout
+  → put UartResult on uartResultQueue
+
+OLED task wakes every 500ms:
+  → take displayMutex
+  → read SharedState
+  → render to display
+  → give displayMutex
 ```
 
 ## SharedState
@@ -104,51 +156,16 @@ R:128 W:64
 Last: 12345678
 ```
 
-## Phase 3 Implementation Steps
-
-### Step 1 — UART loopback test
-Wire GPIO18→GPIO19 (TX→RX loopback). Flash a sketch that sends a string
-on Serial2 and reads it back. No RPi needed.
-DoD: loopback string received correctly, printed to Serial.
-
-### Step 2 — RPi UART echo server
-RPi runs a minimal Python script: read a line on serial, echo it back.
-MCU #3 sends a test line, reads the echo.
-DoD: MCU #3 serial shows sent string echoed back from RPi.
-
-### Step 3 — FreeRTOS skeleton + heartbeat ACK
-Wire shared bus (GPIO8/9) to hub. Flash FreeRTOS skeleton with Receiver,
-Logic, OLED tasks. No UART task yet — logic task stubs DB_READ/DB_WRITE.
-DoD: MCU #3 appears on 5-MCU bus test, heartbeat ACKs visible on MCU #1.
-
-### Step 4 — UART task + RPi DB_READ handler
-Implement UART task. RPi db_server.py handles `op=read` — queries SQLite,
-returns balance JSON. MCU #3 logic task sends DB_READ to RPi via uartQueue,
-returns DB_READ_RESULT to MCU #2.
-DoD: MCU #2 receives correct balance for a known account.
-
-### Step 5 — RPi DB_WRITE handler
-RPi db_server.py handles `op=write` — write-ahead log entry, update balance,
-mark committed. MCU #3 sends DB_WRITE_ACK to MCU #2.
-DoD: balance updated in SQLite, transaction log entry present, ACK received by MCU #2.
-
-### Step 6 — Timeout handling
-Remove RPi from UART while MCU #3 is running. Confirm MCU #3 returns
-Status::TIMEOUT to MCU #2 within 500ms rather than hanging.
-DoD: MCU #2 receives DB_READ_RESULT with st=6 (TIMEOUT), no task hangs.
-
-### Step 7 — End-to-end transaction flow
-Full DEPOSIT and WITHDRAW via MCU #1 serial console → MCU #4 → MCU #2 →
-MCU #3 → RPi → back up the chain.
-DoD: balance changes correctly in SQLite, all ACKs propagate, MCU #1 shows
-transaction complete.
-
 ## Critical Notes
-- Do NOT call vTaskStartScheduler() — ESP32 Arduino already started FreeRTOS
+- Do NOT call vTaskStartScheduler() — Arduino/pioarduino already started FreeRTOS
 - Call vTaskDelete(NULL) in loop() to reclaim loopTask stack
 - sharedBus.init(I2C_ADDRESS) must be called before xTaskCreate()
-- Serial2.begin() for UART1 — Serial is UART0 (USB), do not use for RPi
-- RPi must be booted before MCU #3 starts serving DB requests — UART timeout
-  handles RPi-down gracefully
+- Serial2 is UART1 — do not use Serial (UART0/USB) for RPi communication
+- RPi must be booted before MCU #3 starts — UART timeout handles RPi-down gracefully
+- Disconnect shared bus wires before flashing — bus activity during flash corrupts firmware
 - GPIO8/9 availability must be verified on any future board replacement —
   these are crystal pins on some boards (LOLIN32 Lite) and unavailable
+- pioarduino is MCU #3 only — do not change other MCUs' platform
+- driver/i2c.h (old driver) must not be included in MCU #3 build once
+  driver/i2c_slave.h is in use — conflict causes build failure
+- If U8g2 HW_I2C hangs on begin() under pioarduino, use SW_I2C with GPIO log suppression
