@@ -1,4 +1,9 @@
-CONFIG_AUTOSTART_ARDUINO=y
-CONFIG_FREERTOS_HZ=1000
-CONFIG_LOG_DEFAULT_LEVEL=2
-CONFIG_LOG_MAXIMUM_LEVEL=2
+# MCU #3 sdkconfig overrides
+# Committed to VCS. sdkconfig itself is generated — do not commit it.
+
+# I2C slave driver v2 — required for i2c_new_slave_device() (Phase 3).
+# Included now so it is never forgotten. No effect until the slave is initialized.
+CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y
+
+# Log level
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

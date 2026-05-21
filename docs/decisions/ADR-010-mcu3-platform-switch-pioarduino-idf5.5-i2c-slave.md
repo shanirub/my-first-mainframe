@@ -1,7 +1,7 @@
-# ADR-010: MCU #3 platform switch to pioarduino (IDF 5.5.x) for I2C slave
+# ADR-010: MCU #3 framework switch to pure ESP-IDF (framework = espidf)
 
 ## Status
-Accepted — 2026-05-16
+Accepted — 2026-05-16 (revised 2026-05-21)
 
 ## Amends
 ADR-009 (OLED pin note — see below)
@@ -12,207 +12,175 @@ ADR-009 (OLED pin note — see below)
 
 MCU #3 (ESP32-WROOM-32) needs to operate as an I2C slave at address 0x0A
 on the shared inter-MCU bus (GPIO8/9). All previous attempts to initialize
-I2C slave mode failed with a TG1WDT (Timer Group 1 Watchdog) reset.
+I2C slave mode failed with either a TG1WDT (Timer Group 1 Watchdog) reset
+or a silent GPIO matrix conflict.
 
 ### Investigation — what was tested
-
-Two separate approaches to I2C slave initialization were tested:
 
 **Attempt 1: Arduino `Wire.begin()` in slave mode**
 Both `Wire` (bus 0) and `Wire1` (bus 1) were tested. Both caused TG1WDT.
 
-**Attempt 2: IDF 4.4.7 `i2c_driver_install()` in slave mode (direct call,
-bypassing Arduino Wire entirely)**
-Same result — TG1WDT fired. The reset occurred during the
-`i2c_driver_install()` call itself: the print statement that executes only
-on `ESP_OK` return was never reached. The WDT backtrace showed
-`_xt_context_save` at PC=0x40087328 (Xtensa context save routine called
-during FreeRTOS task switching).
+Root cause confirmed by source code (`esp32-hal-i2c-slave.c`): `Wire.begin()`
+in slave mode calls `i2cSlaveInit()`, which calls `xTaskCreate(i2c_slave_task,
+..., priority=20, ...)`. A task at priority 20 on Core 1 prevents IDLE1 from
+being scheduled. TG1WDT monitors each core's idle task and fires if IDLE1
+does not receive CPU time within ~1 second. Single-core MCUs (#1/#2/#4/#5,
+ESP32-C3) are unaffected — no IDLE1 to starve.
 
-### Root cause — Wire path (confirmed by source code)
+**Attempt 2: IDF 4.4.7 `i2c_driver_install()` in slave mode**
+Same result — TG1WDT fired inside the call, before the success print was
+reached. Root cause not fully traced (candidate: behavior inside
+`i2c_isr_register()` or a 4.4.7-specific bug). Not pursued further —
+the outcome was sufficient to disqualify IDF 4.4.7.
 
-The Arduino Wire slave path was traced to source:
+**Attempt 3: pioarduino (arduino-esp32 3.x, IDF 5.5.x) with `i2c_new_slave_device()`**
+`i2c_new_slave_device()` (IDF 5.2+, slave driver v2, interrupt-driven, no
+internal task) eliminates the WDT root cause. However, arduino-esp32 3.x
+auto-initializes Wire (I2C_NUM_0) on GPIO8/9 before `setup()` runs, claiming
+those pins in the IDF GPIO matrix before our code executes.
 
-File: `framework-arduinoespressif32/cores/esp32/esp32-hal-i2c-slave.c`
+Sub-attempts to resolve the GPIO matrix conflict:
+1. Change `conf.i2c_port` to I2C_NUM_1 — no effect (conflict is at GPIO
+   level, not peripheral number level)
+2. Swap init order: `sharedBus.init()` before `oled.begin()` — no effect
+   (Wire is initialized by the framework before `setup()` runs)
+3. Call `gpio_reset_pin(GPIO_NUM_8/9)` before `sharedBus.init()` — board
+   hung, no serial output, OLED blank. `gpio_reset_pin()` conflicts with
+   something the framework depends on at that point in boot.
 
-`Wire.begin()` in slave mode calls `i2cSlaveInit()` (line 217), which calls:
+All three workarounds failed. The Wire auto-init happens at the framework
+bootstrap level, before any user code can intervene.
 
-```c
-xTaskCreate(i2c_slave_task, "i2c_slave_task", 4096, i2c, 20, &i2c->task_handle);
-```
-(line 282)
+### Root cause summary
 
-`i2c_slave_task` (line 807) blocks on `xQueueReceive(..., portMAX_DELAY)` —
-it does not busy-wait, but it is created at priority 20, which is higher than
-all user tasks and higher than the Arduino `loopTask`.
+The Arduino layer (any version) auto-initializes Wire on GPIO8/9 before
+user code runs. This is by design in arduino-esp32 and cannot be suppressed
+at the user level without modifying the framework itself. Any solution that
+retains the Arduino layer is fighting this constraint indefinitely.
 
-On the dual-core ESP32-WROOM-32, FreeRTOS pins tasks to cores. A task at
-priority 20 running on Core 1 prevents IDLE1 from being scheduled. TG1WDT
-monitors each core's idle task independently and fires if IDLE1 does not
-receive CPU time within approximately 1 second. This is the confirmed
-mechanism for the Wire path WDT.
+### Why `i2c_new_slave_device()` is the correct slave API
 
-Single-core MCUs (#1, #2, #4, #5 — ESP32-C3) are not affected: they have
-only one core, so there is no IDLE1 to starve.
+IDF 4.4.7 `i2c_driver_install()` in slave mode creates an internal FreeRTOS
+task at priority 20 (Wire path, confirmed) and has additional instability
+on dual-core ESP32-WROOM (observed but not fully traced). IDF 5.2 introduced
+`i2c_new_slave_device()` (slave driver v2): interrupt-driven, no internal task,
+push-based receive via ring buffer and ISR callback. This is the correct
+design for a slave device in a FreeRTOS system with managed task priorities.
 
-### Root cause — `i2c_driver_install()` path (observed, not fully explained)
-
-The IDF 4.4.7 `i2c_driver_install()` source was read in full
-(`framework-espidf/components/driver/i2c.c`, lines 240–end). In slave mode
-it performs: heap allocation, two `xRingbufferCreate` calls, two
-`xSemaphoreCreateMutex` calls, ISR registration via `i2c_isr_register()`,
-and a slave RX interrupt enable. It creates no FreeRTOS task and contains
-no polling loop or busy-wait. Based on source alone, the function should
-return in microseconds.
-
-Despite this, the WDT fired inside the call. The cause is not explained by
-the source code of `i2c_driver_install()` itself. Candidate explanations
-include behavior inside `i2c_isr_register()` or `i2c_hw_enable()` (not yet
-read), an IDF 4.4.7-specific bug, or a hardware interaction. This was not
-investigated further because the outcome — WDT on both initialization paths
-— was sufficient to confirm that IDF 4.4.7 cannot reliably support I2C slave
-on this board, regardless of mechanism.
-
-### Why the evidence is sufficient for the decision
-
-The decision to switch platforms does not require explaining the
-`i2c_driver_install()` WDT. The decision chain is:
-
-1. MCU #3 requires I2C slave mode — confirmed requirement.
-2. `Wire.begin()` in slave mode causes WDT — observed in testing.
-3. Root cause for the Wire path — confirmed by source: internal task created
-   at priority 20, starving IDLE1 on Core 1.
-4. `i2c_new_slave_device()` is interrupt-driven and creates no internal task
-   — confirmed by IDF 5.x design. This is the correct fix.
-5. `i2c_new_slave_device()` requires IDF 5.2+ — confirmed fact.
-6. IDF 4.4.7 does not provide it — confirmed fact.
-7. The `i2c_driver_install()` WDT independently confirms that IDF 4.4.7's
-   I2C slave support is unusable on this hardware, reinforcing point 6.
-8. pioarduino provides arduino-esp32 3.x built against IDF 5.5.x, retaining
-   Arduino APIs — confirmed fact.
-
-The Wire path alone (points 1–6) is sufficient to justify the platform
-switch. Point 7 adds weight but is not required.
-
-### Why the current platform cannot fix this
-
-The project currently uses `platform = espressif32@7.0.1` with
-`framework = arduino, espidf` (combined mode). This platform bundles
-arduino-esp32 core 2.x, which ships with IDF 4.4.7 compiled in. The
-Arduino HAL is compiled against this specific IDF version — it cannot be
-replaced independently.
-
-`i2c_new_slave_device()`, the interrupt-driven slave API that creates no
-internal task, was introduced in IDF 5.2. It is not available in IDF 4.4.7.
-
-### Platform options evaluated
-
-**Option A: Stay on espressif32@7.0.1, work around WDT**
-Manually feed the watchdog (`esp_task_wdt_reset()`) or increase WDT timeout.
-Rejected: masks the symptom without fixing the cause. Fragile in production
-and misleading as a learning outcome.
-
-**Option B: Switch to pure `framework = espidf`**
-Drops all Arduino APIs. Requires rewriting Serial → `uart_driver_install`,
-Wire/U8g2 → IDF I2C + custom OLED HAL, delay → `vTaskDelay`. Full control,
-correct long-term solution. Rejected for now: significant rewrite scope
-that delays the actual DB controller implementation. Remains viable for
-Phase 5 cleanup.
-
-**Option C: Switch to pioarduino platform (arduino-esp32 3.x, IDF 5.5.x)**
-pioarduino is a community-maintained fork of the PlatformIO espressif32
-platform that supports arduino-esp32 3.x. The latest stable release bundles
-arduino-esp32 3.3.x built against IDF 5.5.x. This gives access to
-`i2c_new_slave_device()` (IDF 5.2+) while retaining Arduino APIs (Serial,
-Wire, U8g2). One `platformio.ini` line change for MCU #3 only.
-Selected.
+`CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y` must be set in `sdkconfig.defaults`
+to activate driver v2. In IDF 6.0, slave driver v1 is removed and v2 is the
+only path — our choice is forward-compatible.
 
 ---
 
 ## Decision
 
-Switch MCU #3 `platformio.ini` platform to pioarduino stable:
+Switch MCU #3 to **`framework = espidf`** on the official PlatformIO
+`espressif32` platform, pinned to v6.10.0 (IDF 5.4):
 
 ```ini
-platform = https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip
+[env:mcu3]
+platform = espressif32 @ 6.10.0
+framework = espidf
+board = esp32dev
+monitor_speed = 921600
+upload_port = /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+monitor_port = /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
 ```
 
-All other MCUs (#1, #2, #4, #5) remain on `espressif32@7.0.1`. The platform
-difference is MCU #3 only — no shared library or shared config changes.
+### Why not pioarduino (previous intermediate decision)
 
-The shared bus library for MCU #3 (`shared_bus_wroom`) will use
-`i2c_new_slave_device()` from `driver/i2c_slave.h` (IDF 5.2+ new driver).
-This header must NOT be combined with `driver/i2c.h` (old driver) in the
-same build — they conflict at link time.
+pioarduino (arduino-esp32 3.x, IDF 5.5.x) was considered as a lower-effort
+path: retain Arduino APIs, gain IDF 5.5. Rejected because it does not solve
+the root cause — the GPIO matrix conflict exists in any Arduino-layer build
+regardless of IDF version. pioarduino provides the right IDF version but
+the wrong framework layer.
 
-### OLED under pioarduino
+### Why not espressif32 @ 7.0.0 (IDF 6.0)
 
-U8g2 `HW_I2C` compatibility with arduino-esp32 3.x under pioarduino is not
-confirmed prior to implementation. There is a known pattern of U8g2 HW_I2C
-breaking when the underlying Wire implementation changes between arduino-esp32
-versions. A smoke test (Step 0.2) will determine whether HW_I2C works or
-whether SW_I2C fallback is needed.
+espressif32 v7.0.0 (IDF 6.0) was released April 2026 and is now the default
+when `platform = espressif32` is unpinned. Our slave API (`i2c_new_slave_device()`,
+driver v2) survives into IDF 6.0 — slave driver v1 was removed, v2 was not.
+However, IDF 6.0 has additional breaking changes (MbedTLS v4, C/C++ standard
+upgrades) that have not been evaluated for this project. Pinning to 6.10.0
+(IDF 5.4) gives a stable, known-good base. Upgrading to IDF 6.0 is deferred
+until a dedicated test session.
 
-SW_I2C fallback path if needed:
-- Switch constructor to `U8G2_SSD1306_128X64_NONAME_F_SW_I2C`
-- Add `esp_log_level_set("gpio", ESP_LOG_WARN)` before `oled.begin()` to
-  suppress GPIO driver INFO logs that previously caused UART TX FIFO
-  spin-loops and WDT on WROOM
+### Platform line rationale
 
-### shared_bus_wroom library interface
+`espressif32 @ 6.10.0` with `framework = espidf`:
+- PlatformIO downloads vanilla IDF 5.4 toolchain on first build — no manual
+  installation required
+- All source files are listed in `main/CMakeLists.txt` via `idf_component_register()`
+- Configuration overrides go in `sdkconfig.defaults` (committed); `sdkconfig`
+  itself is generated and should not be committed
+- `managed_components/` and `dependencies.lock` are generated — not committed
 
-`shared_bus_wroom` exposes the same interface as `shared_bus` (used by
-ESP32-C3 MCUs): `init()`, `send()`, `poll()`. Selected at compile time
-via `#ifdef MCU_BOARD_WROOM`. Internally:
+### Shared bus library
 
-- `init()` — calls `i2c_new_slave_device()`, registers `on_receive` and
-  `on_request` callbacks, creates FreeRTOS semaphore
-- `poll()` — blocks task on semaphore; ISR callback gives semaphore on
-  message receipt, copies bytes to internal buffer
-- `send()` — calls `i2c_slave_write()` to pre-load TX buffer before master
-  reads
+`shared_bus_wroom` is rewritten from scratch for pure ESP-IDF. No Arduino
+dependencies. Same public API as `shared_bus` (ESP32-C3 MCUs): `init()`,
+`send()`, `poll()`. Internal implementation:
+- `init()`: calls `i2c_new_slave_device()` on I2C_NUM_0 / GPIO8/9, registers
+  ISR callback, creates FreeRTOS semaphore
+- `poll()`: blocks on semaphore; ISR callback gives semaphore on receive,
+  copies bytes from ring buffer to internal buffer
+- `send()`: calls `i2c_slave_write()` to pre-load TX buffer
+
+`CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y` required in `sdkconfig.defaults`.
+Include `driver/i2c_slave.h` — do NOT include `driver/i2c.h` (old driver);
+they conflict at link time.
+
+### OLED
+
+`oled_display_wroom` is written from scratch for pure ESP-IDF.
+Uses U8g2 in HAL-callback mode:
+- I2C master on I2C_NUM_1 / GPIO16/17 via `i2c_new_master_bus()` +
+  `i2c_master_transmit()` (new IDF 5.x master API — no deprecated calls)
+- Two callbacks provided to U8g2 setup function:
+  `u8x8_byte_i2c_cb` (sends bytes over I2C_NUM_1)
+  `u8x8_gpio_delay_cb` (handles reset pin and delays via `vTaskDelay`)
+- No community HAL library (all existing ones use deprecated `i2c_driver_install()`)
+
+### Debug output
+
+`ESP_LOGI` / `ESP_LOGW` / `ESP_LOGE` (IDF logging macros) replace
+`Serial.print`. Output appears on UART0 (USB/CP2102) at 921600 baud.
+UART1 (GPIO18/19) is reserved exclusively for RPi communication.
 
 ---
 
 ## Impact on MCU #3
 
-- `platformio.ini`: platform line changed to pioarduino zip URL
-- `sdkconfig.defaults`: review required — some keys may differ between
-  IDF 4.4.7 and IDF 5.5.x. `CONFIG_AUTOSTART_ARDUINO=y` remains required.
-  `CONFIG_ARDUINO_RUNNING_CORE=0` was experimental — remove, revert to default (Core 1).
-- `shared_bus_wroom.h/.cpp`: new files, using `driver/i2c_slave.h`
-- `oled_display_wroom.cpp`: may need SW_I2C constructor swap pending smoke test
-- `main.cpp`: no structural change — task architecture unchanged
+- `platformio.ini`: platform = espressif32 @ 6.10.0, framework = espidf
+- `CMakeLists.txt` (root + main/): required, created from scratch
+- `sdkconfig.defaults`: `CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y` minimum
+- `shared_bus_wroom.h/.cpp`: rewritten, no Arduino dependencies
+- `oled_display_wroom.h/.cpp`: rewritten, U8g2 HAL-callback mode, new IDF master API
+- `main.cpp`: `app_main()` replaces `setup()`/`loop()`; no `vTaskStartScheduler()`
 
 ## Impact on other MCUs
 
-None. Platform change is isolated to MCU #3's `platformio.ini`.
+None. Framework change is isolated to MCU #3's `platformio.ini`.
 
 ---
 
 ## Consequences
 
-- pioarduino is a community fork, not officially maintained by Espressif or
-  PlatformIO. It is actively maintained (latest release 2026-01) but carries
-  more risk than the official platform. Acceptable for a learning project.
-- arduino-esp32 3.x includes breaking API changes from 2.x. These are
-  unlikely to affect MCU #3 code (which uses only Wire, Serial, U8g2, and
-  FreeRTOS primitives) but should be kept in mind if build errors appear.
-- `driver/i2c.h` (old driver) must not be included anywhere in MCU #3 build
-  once `driver/i2c_slave.h` is in use — conflict causes build failure.
-- The `i2c_driver_install()` WDT root cause was not fully resolved. If the
-  pure espidf path (Option B) is pursued in Phase 5, this should be
-  investigated before assuming `i2c_driver_install()` is safe to use.
-- Future reader: if pioarduino becomes unmaintained, Option B (pure espidf)
-  remains the correct long-term path.
+- No Arduino APIs (Serial, Wire, delay) available in MCU #3 build.
+  Replacements: `uart_driver_install()`, `i2c_new_*`, `vTaskDelay()`.
+- U8g2 HAL must be written once; it is ~60 lines and well-understood.
+- `espressif32` is the official Espressif/PlatformIO platform — lower
+  maintenance risk than pioarduino.
+- The I2C slave v2 API (`i2c_new_slave_device()`) is the forward-compatible
+  path in IDF 6.0+ — this decision does not create future upgrade debt.
+- IDF 6.0 upgrade path exists (espressif32 @ 7.0.0) but requires a dedicated
+  evaluation session before adoption.
 
 ---
 
 ## Amendment note for ADR-009
 
-ADR-009 pin table lists OLED GPIO16/17 as "U8g2 SW I2C". This was accurate
-at the time of writing. During WDT investigation (prior to this ADR), OLED
-was switched to hardware I2C (U8g2 HW_I2C, Wire bus 0 remapped to GPIO16/17)
-to eliminate SW I2C bit-banging as a WDT source. ADR-009 pin table should
-be read as: OLED GPIO16/17 = U8g2 HW_I2C (primary) / SW_I2C (fallback
-pending pioarduino smoke test)
+ADR-009 pin table lists OLED GPIO16/17 as "U8g2 SW I2C". Under pure ESP-IDF,
+OLED is on hardware I2C_NUM_1 (GPIO16/17) using the new IDF master API.
+SW I2C (bit-banged) is not used.

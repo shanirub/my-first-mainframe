@@ -73,11 +73,15 @@ scheduling, mutexes protect bus access.
 > SPI debugging. MCU #3 remains on shared bus at 0x0A; storage delegated
 > to Raspberry Pi 3B+ over UART. See ADR-009 and raspi-db-server/CLAUDE.md.
 >
-> MCU #3 is on ESP32-WROOM-32 (dual-core). Both Arduino Wire slave and
-> i2c_driver_install() in slave mode caused TG1WDT resets on this board.
-> Solution: switch to pioarduino platform (IDF 5.5.x) and use
-> i2c_new_slave_device() — interrupt-driven, no internal task creation.
-> See ADR-010 for full root cause investigation and decision chain.
+> MCU #3 Arduino I2C slave initialization caused TG1WDT on all attempted
+> paths (Wire.begin() slave mode, i2c_driver_install() slave mode). Root
+> cause: arduino-esp32 creates an internal task at priority 20 for I2C
+> slave, starving IDLE1 on the dual-core WROOM. Further, arduino-esp32 3.x
+> auto-initializes Wire on GPIO8/9 before setup() runs, blocking
+> i2c_new_slave_device() from claiming those pins even under pioarduino.
+> Solution: switch to framework = espidf (pure ESP-IDF, no Arduino layer),
+> which eliminates all framework-level GPIO conflicts at the root.
+> See ADR-010 for full investigation and decision chain.
 
 - [x] MCU #3: ESP32-WROOM-32 DevKit confirmed on /dev/ttyUSB0, OLED working
 - [x] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
@@ -85,29 +89,72 @@ scheduling, mutexes protect bus access.
 - [x] MCU #3: UART loopback confirmed (GPIO18→GPIO19) — Serial2 round-trip
 - [x] MCU #3 + RPi: UART echo round-trip confirmed (MCU sends, RPi echoes back)
 
-**MCU #3 — Phase 0: Platform**
-- [ ] 0.1 Switch to pioarduino (IDF 5.5.x) — boot test, confirm IDF version in log
-- [ ] 0.2 OLED smoke test — confirm U8g2 HW_I2C works under pioarduino; fall back to SW_I2C if needed
+**MCU #3 — Phase 0: ESP-IDF Project Skeleton**
+> Framework: espressif32 @ 6.10.0 (IDF 5.4), framework = espidf.
+> No Arduino layer. app_main() replaces setup()/loop().
+> ESP_LOGI replaces Serial. vTaskDelay replaces delay().
 
-**MCU #3 — Phase 1: Shared Bus Library**
-- [ ] 1.1 i2c_new_slave_device() init — slave at 0x0A on GPIO8/9, no WDT
-- [ ] 1.2 Receive message via ISR callback — raw bytes printed to Serial
-- [ ] 1.3 Send response — i2c_slave_write() ACK, confirmed received by MCU #1
-- [ ] 1.4 Wrap into shared_bus_wroom library — init()/send()/poll() interface matching other MCUs
+- [ ] 0.1 Bare espidf project — boots, logs "MCU3 boot OK" via ESP_LOGI at 921600
+      DoD: visible in monitor, no WDT, no crash, IDF version visible in boot log
+- [ ] 0.2 Confirm sdkconfig.defaults — CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y
+      and any other required keys compile and boot cleanly
 
-**MCU #3 — Phase 2: FreeRTOS Skeleton**
-- [ ] 2.1 Receiver + Logic tasks — heartbeat ACK confirmed on 5-MCU bus; DB_READ/DB_WRITE stubbed
-- [ ] 2.2 OLED task — SharedState updates every 500ms under displayMutex
+**MCU #3 — Phase 1: UART to RPi**
+> uart_driver_install() on UART1, GPIO18/19. Simplest interface first —
+> gives a working debug channel before I2C complexity starts.
 
-**MCU #3 — Phase 3: UART Subsystem**
-- [ ] 3.1 UART task skeleton — Serial2 init in task context, loopback confirmed
-- [ ] 3.2 RPi round-trip in task context — JSON echo confirmed inside UART task
-- [ ] 3.3 Logic → UART queue wiring — uartQueue/uartResultQueue, 500ms timeout fires on RPi disconnect
+- [ ] 1.1 UART1 init — hardcoded JSON request sent to RPi, response logged
+      DoD: RPi running db_server.py, MCU sends {"op":"read","ac":"12345678"},
+      valid JSON response logged via ESP_LOGI
+- [ ] 1.2 Timeout path — RPi-down returns after 500ms, TIMEOUT logged
+      DoD: RPi powered off, MCU logs TIMEOUT within 500ms, no hang
 
-**MCU #3 — Phase 4: Full Integration**
-- [ ] 4.1 DB_READ end-to-end — MCU #2 receives correct balance from SQLite via RPi
-- [ ] 4.2 DB_WRITE end-to-end — balance updated in SQLite, DB_WRITE_ACK received by MCU #2
-- [ ] 4.3 Timeout and fault handling — RPi-down returns Status::TIMEOUT within 500ms, clean recovery
+**MCU #3 — Phase 2: OLED**
+> U8g2 in HAL-callback mode. I2C_NUM_1 hardware master on GPIO16/17.
+> New IDF master API (i2c_new_master_bus / i2c_master_transmit) — no
+> deprecated i2c_driver_install().
+
+- [ ] 2.1 U8g2 HAL callbacks — i2c_byte_cb and gpio_delay_cb written for IDF
+      DoD: OLED shows static "MCU3 BOOT" text, persists across resets
+- [ ] 2.2 OLED task at priority 1, 500ms refresh, static content
+      DoD: 60-second soak, no crash, OLED continuously updating
+
+**MCU #3 — Phase 3: Shared Bus I2C Slave**
+> Core objective. i2c_new_slave_device() on I2C_NUM_0 / GPIO8/9.
+> No Arduino Wire anywhere — GPIO matrix conflict eliminated at root.
+
+- [ ] 3.1 i2c_new_slave_device() init — slave at 0x0A on GPIO8/9
+      DoD: no "GPIO 8/9 is not usable" warning in boot log, no WDT,
+      boot log shows slave init OK
+- [ ] 3.2 Receive via ISR callback — raw bytes from MCU #1 printed via ESP_LOGI
+      DoD: MCU #1 sends HEARTBEAT to 0x0A, MCU #3 logs raw bytes received
+- [ ] 3.3 Send response — i2c_slave_write() ACK pre-loaded, read by MCU #1
+      DoD: MCU #1 log shows ACK received from 0x0A
+- [ ] 3.4 Wrap into shared_bus_wroom library — init()/send()/poll() interface
+      DoD: same API as shared_bus (ESP32-C3 version), confirmed by code review
+
+**MCU #3 — Phase 4: FreeRTOS Task Architecture**
+> Wire all four tasks with three queues. Logic task routes messages.
+
+- [ ] 4.1 Receiver + Logic tasks — HEARTBEAT ACK on 5-MCU bus;
+      DB_READ/DB_WRITE stubbed (log only)
+      DoD: MCU #1 OLED shows MCU #3 alive in heartbeat health display
+- [ ] 4.2 OLED task — SharedState updates every 500ms under displayMutex
+      DoD: live read/write counters visible on OLED during bus activity
+
+**MCU #3 — Phase 5: Full Integration**
+> Wire UART task into queue flow. End-to-end DB operations.
+
+- [ ] 5.1 UART task skeleton — uart_driver_install in task context, loopback confirmed
+- [ ] 5.2 Logic → UART queue wiring — uartQueue/uartResultQueue, 500ms timeout fires
+- [ ] 5.3 DB_READ end-to-end — MCU #2 receives correct balance from SQLite via RPi
+- [ ] 5.4 DB_WRITE end-to-end — balance updated in SQLite, DB_WRITE_ACK to MCU #2
+- [ ] 5.5 Timeout and fault handling — RPi-down returns Status::TIMEOUT within 500ms
+
+**MCU #3 — Phase 6: Hardening**
+- [ ] uxTaskGetStackHighWaterMark() logged at startup for all tasks — tune stack sizes
+- [ ] WDT audit: all tasks block on queues or call vTaskDelay, never spin
+- [ ] 10-minute soak with RPi cycling on/off — no WDT resets, no queue overflow
 
 **RPi DB backend**
 - [ ] RPi: db_server.py — DB_READ handler (SQLite accounts table, balance query)
