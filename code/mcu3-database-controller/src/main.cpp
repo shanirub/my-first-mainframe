@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // MCU #3 — Database Controller
-// Phase 1 — UART to RPi: handshake + echo test
+// Phase 2.2 — OLED task: 500ms refresh, SharedState under displayMutex
 //
 // DoD:
-//   1.1 RPi running, handshake completes — "UART handshake OK" in log
-//   1.2 Echo test passes — "UART echo OK" in log
-//   1.2 RPi down — timeout fires within 2000ms, "UART echo TIMEOUT" in log
+//   2.2 OLED task running at priority 1, refreshes every 500ms.
+//       Displays live SharedState (zeroed at boot — no Logic task yet).
+//       60-second soak: no crash, no WDT, OLED continuously updating.
 //
 // Platform: espressif32 @ 6.10.0 (IDF 5.4), framework = espidf
 // Board:    ESP32-WROOM-32 DevKit (38-pin, CP2102)
@@ -13,16 +13,30 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_idf_version.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
 #include "oled_display_wroom.h"
+#include "shared_state.h"
 #include "config.h"
 #include <cstring>
+#include <cstdio>
 
 static const char *TAG = "MCU3";
+
+// STACK_SIZE_OLED = 2048 — defined in shared_config.h (via config.h).
+// Receiver/OLED tasks are shallow: no JsonDocument, no printf formatting on stack.
+// Tune with uxTaskGetStackHighWaterMark() in Phase 6 if needed.
+
+// ── SharedState + mutex — definitions ────────────────────────────────────────
+// Declared extern in shared_state.h; defined here once.
+// displayMutex created in app_main() before xTaskCreate() — guaranteed
+// non-null when the OLED task first runs.
+SharedState       gSharedState = {};   // zero-initialised at boot
+SemaphoreHandle_t gDisplayMutex = nullptr;
 
 // ── UART configuration ───────────────────────────────────────────────────────
 // UART_NUM_1 = UART1 hardware peripheral — separate from UART0 (debug/USB).
@@ -46,8 +60,6 @@ static void uart_init(void)
     ESP_ERROR_CHECK(uart_param_config(UART_PORT, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(UART_PORT, UART_TX_PIN, UART_RX_PIN,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    // TX buffer 0 = synchronous writes (blocks until bytes in HW FIFO).
-    // Acceptable here — no concurrent tasks yet.
     ESP_ERROR_CHECK(uart_driver_install(UART_PORT, UART_RX_BUF, 0, 0, NULL, 0));
     ESP_LOGI(TAG, "UART1 init OK — TX GPIO%d RX GPIO%d @ %d baud",
              UART_TX_PIN, UART_RX_PIN, UART_BAUD);
@@ -105,7 +117,6 @@ static void uart_handshake(void)
                 ESP_LOGW(TAG, "UART handshake — ignoring unexpected: \"%s\"", buf);
             }
         } else {
-            // Timeout — no line in 2000ms. RPi not up yet, keep waiting.
             ESP_LOGI(TAG, "UART handshake — still waiting...");
         }
     }
@@ -114,7 +125,7 @@ static void uart_handshake(void)
 // ── Echo test — send a string, expect it back ────────────────────────────────
 static void uart_echo_test(void)
 {
-    const char *msg     = "hello from mcu3";
+    const char *msg = "hello from mcu3";
     char        tx[32];
     snprintf(tx, sizeof(tx), "%s\n", msg);
 
@@ -133,6 +144,55 @@ static void uart_echo_test(void)
     }
 }
 
+// ── OLED task ─────────────────────────────────────────────────────────────────
+// Runs at priority 1 (lowest application priority).
+// Wakes every 500ms, takes displayMutex, snapshots SharedState, releases
+// mutex, then renders to OLED. Mutex is NOT held during the I2C transfer —
+// minimises contention time for Logic task (Phase 4).
+//
+// Layout:
+//   DATABASE CTRL
+//   Addr: 0x0A
+//   R:0 W:0
+//   Last: --------
+static void oled_task(void *pvParameters)
+{
+    OledDisplayWroom *oled = static_cast<OledDisplayWroom *>(pvParameters);
+
+    char line3[24];  // "R:XXXXXXXX W:XXXXXXXX"
+    char line4[24];  // "Last: XXXXXXXX"
+
+    ESP_LOGI(TAG, "OLED task started");
+
+    while (true) {
+        // ── Snapshot SharedState under mutex ─────────────────────────────────
+        // Take with portMAX_DELAY: Logic task (Phase 4) holds mutex only for
+        // a field update — contention window is microseconds, not a concern.
+        SharedState snap;
+        xSemaphoreTake(gDisplayMutex, portMAX_DELAY);
+        snap = gSharedState;   // struct copy — safe, no pointers
+        xSemaphoreGive(gDisplayMutex);
+
+        // ── Format lines ─────────────────────────────────────────────────────
+        snprintf(line3, sizeof(line3), "R:%lu W:%lu",
+                 (unsigned long)snap.readCount,
+                 (unsigned long)snap.writeCount);
+
+        // Show dashes if no account seen yet
+        const char *acct = (snap.lastAccount[0] != '\0') ? snap.lastAccount : "--------";
+        snprintf(line4, sizeof(line4), "Last: %s", acct);
+
+        // ── Render ───────────────────────────────────────────────────────────
+        oled->showStatus("DATABASE CTRL", "Addr: 0x0A", line3, line4);
+
+        ESP_LOGD(TAG, "OLED refresh — %s | %s", line3, line4);
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    // Unreachable — FreeRTOS tasks must not return. vTaskDelete not needed
+    // here since the loop is infinite, but noted for completeness.
+}
+
 // ── app_main ─────────────────────────────────────────────────────────────────
 extern "C" void app_main(void)
 {
@@ -141,22 +201,49 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "MCU3 boot OK");
 
     uart_init();
-    ESP_LOGI(TAG, "UART pins — TX:%d RX:%d", UART_TX_PIN, UART_RX_PIN);
     uart_handshake();
     uart_echo_test();
 
-    // ── Phase 2.1 — OLED smoke test ──────────────────────────────────────────
-    // DoD: static "MCU3 BOOT" text visible on screen, persists across resets.
+    // ── Create displayMutex before any task that uses it ─────────────────────
+    // Must happen in app_main(), not inside the task — tasks may run before
+    // returning from xTaskCreate() on a multi-core MCU (ESP32 has two cores).
+    gDisplayMutex = xSemaphoreCreateMutex();
+    if (gDisplayMutex == nullptr) {
+        ESP_LOGE(TAG, "displayMutex creation FAILED — heap exhausted?");
+        return;  // cannot proceed safely
+    }
+
+    // ── OLED init ─────────────────────────────────────────────────────────────
+    // Static allocation: persists for the lifetime of app_main's frame, which
+    // never returns under espidf (app_main stack is kept alive by IDF).
+    // Passed to oled_task via pvParameters — raw pointer, lifetime is safe.
     static OledDisplayWroom oled(OLED_SDA_PIN, OLED_SCL_PIN);
     if (!oled.begin()) {
         ESP_LOGE(TAG, "OLED init FAILED");
+        // Non-fatal — OLED task will still run, display will be blank/undefined.
+        // Do not return; the rest of the system should still boot.
     } else {
-        oled.showStatus("DATABASE CTRL", "Addr: 0x0A", "Phase 2.1", "BOOT OK");
-        ESP_LOGI(TAG, "OLED display OK");
+        ESP_LOGI(TAG, "OLED init OK");
     }
 
-    ESP_LOGI(TAG, "Phase 2.1 complete — entering idle loop");
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
+    // ── Create OLED task ──────────────────────────────────────────────────────
+    // Priority 1: lowest application priority — display is best-effort.
+    // Stack 4096 bytes: u8g2 SendBuffer does I2C on calling stack.
+    BaseType_t ret = xTaskCreate(
+        oled_task,
+        "oled",
+        STACK_SIZE_OLED,
+        &oled,           // pvParameters: pointer to OledDisplayWroom instance
+        1,               // priority
+        nullptr          // task handle not needed
+    );
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "OLED task creation FAILED (ret=%d)", (int)ret);
+    } else {
+        ESP_LOGI(TAG, "OLED task created — 500ms refresh, priority 1");
     }
+
+    // app_main() returns here — IDF keeps the scheduler running.
+    // All work is now in tasks.
+    ESP_LOGI(TAG, "Phase 2.2 — app_main complete, tasks running");
 }

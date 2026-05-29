@@ -118,7 +118,7 @@ scheduling, mutexes protect bus access.
 - [x] 2.1 U8g2 HAL callbacks — i2c_byte_cb and gpio_delay_cb wired via
       u8g2-hal-esp-idf. OLED shows static "DATABASE CTRL / Addr: 0x0A /
       Phase 2.1 / BOOT OK", persists across resets.
-- [ ] 2.2 OLED task at priority 1, 500ms refresh, static content
+- [x] 2.2 OLED task at priority 1, 500ms refresh, static content
       DoD: 60-second soak, no crash, OLED continuously updating
 
 **MCU #3 — Phase 3: Shared Bus I2C Slave**
