@@ -18,6 +18,7 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
+#include "oled_display_wroom.h"
 #include "config.h"
 #include <cstring>
 
@@ -144,7 +145,17 @@ extern "C" void app_main(void)
     uart_handshake();
     uart_echo_test();
 
-    ESP_LOGI(TAG, "Phase 1 complete — entering idle loop");
+    // ── Phase 2.1 — OLED smoke test ──────────────────────────────────────────
+    // DoD: static "MCU3 BOOT" text visible on screen, persists across resets.
+    static OledDisplayWroom oled(OLED_SDA_PIN, OLED_SCL_PIN);
+    if (!oled.begin()) {
+        ESP_LOGE(TAG, "OLED init FAILED");
+    } else {
+        oled.showStatus("DATABASE CTRL", "Addr: 0x0A", "Phase 2.1", "BOOT OK");
+        ESP_LOGI(TAG, "OLED display OK");
+    }
+
+    ESP_LOGI(TAG, "Phase 2.1 complete — entering idle loop");
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));
     }

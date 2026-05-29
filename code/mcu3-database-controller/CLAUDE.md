@@ -19,7 +19,6 @@ For full architecture reasoning and hardware debugging history, see:
 - ADR-009: UART/RPi decision, protocol, RPi setup requirements
 - ADR-010: root cause of Arduino I2C slave failures; decision to switch to
   pure ESP-IDF (framework = espidf)
-- ADR-011: (to be written) pure ESP-IDF implementation decisions
 
 For RPi setup steps, Python script design, and SQLite schema, see:
 - code/raspi-db-server/CLAUDE.md
@@ -29,7 +28,7 @@ For implementation status and next steps, see the project roadmap:
 
 ## Platform
 MCU #3 uses **pure ESP-IDF** via `framework = espidf` on the official
-PlatformIO `espressif32` platform, pinned to v6.10.0 (IDF 5.4).
+PlatformIO `espressif32` platform, pinned to v6.10.0 (IDF 5.4.0).
 
 Rationale: arduino-esp32 3.x auto-initializes Wire (I2C_NUM_0) on GPIO8/9
 before `setup()` runs, poisoning the GPIO matrix for `i2c_new_slave_device()`.
@@ -44,22 +43,23 @@ board = esp32dev
 ```
 
 IDF version pinning rationale:
-- espressif32 @ 6.10.0 → IDF 5.4 — confirmed stable, `i2c_new_slave_device()`
-  available (requires IDF ≥ 5.2), avoids IDF 6.0 unknowns
+- espressif32 @ 6.10.0 → IDF 5.4.0 — confirmed working
 - espressif32 (unpinned) as of May 2026 resolves to v7.0.0 → IDF 6.0 —
-  our slave API survives (v1 was removed, v2 which we use is retained),
-  but IDF 6.0 has other breaking changes; defer upgrade until stable
-- Do NOT use pioarduino for MCU #3 — no longer needed with framework = espidf
+  our slave API survives (v1 removed, v2 retained), but IDF 6.0 has other
+  breaking changes; defer upgrade until stable
+- Do NOT use pioarduino — no longer needed with framework = espidf
 
 Other MCUs (#1, #2, #4, #5) remain on espressif32@7.0.1 with framework = arduino.
 MCU #3 is the only board on espidf.
 
 ## Monitor Baud Rate
-**921600** — matches the XTAL-clock baud rate requirement.
-Under ESP-IDF, `uart_driver_install()` on UART0 (debug output) must be
-configured at 921600. This is the same constraint as under pioarduino —
-the XTAL/APB clock source issue is IDF-level, not Arduino-level.
-`monitor_speed = 921600` in platformio.ini.
+**115200** — IDF 5.4.0 console UART defaults to 115200 and requires
+`CONFIG_ESP_CONSOLE_UART_CUSTOM=y` to change. Not worth the complexity.
+`monitor_speed = 115200` in platformio.ini.
+
+Note: the 921600 requirement was an arduino-esp32 3.x constraint (XTAL clock
+source causing baud deviation at 115200). Under pure ESP-IDF that constraint
+does not apply.
 
 ## Hardware History
 MCU #3 went through three board replacements before reaching this board.
@@ -85,8 +85,9 @@ Both I2C buses are hardware peripherals (not bit-banged):
 - I2C_NUM_1 on GPIO16/17: master role, private OLED bus
 
 ## UART Protocol
-Newline-terminated JSON. MCU #3 writes a request and reads until `\n`.
-Timeout: 500ms — on expiry, return `Status::TIMEOUT` to MCU #2.
+One-time boot handshake: RPi sends PING, MCU responds PONG. RPi initiates
+because it boots slower. After handshake, newline-terminated JSON is used.
+Timeout: 500ms — on expiry, return Status::TIMEOUT to MCU #2.
 
 Requests to RPi:
 ```json
@@ -103,8 +104,7 @@ Responses from RPi:
 ## FreeRTOS Task Architecture
 Under pure ESP-IDF, `app_main()` replaces Arduino `setup()`/`loop()`.
 FreeRTOS is started by the IDF before `app_main()` is called — do NOT
-call `vTaskStartScheduler()`. `app_main()` creates tasks and returns
-(or blocks); it does not loop.
+call `vTaskStartScheduler()`. `app_main()` creates tasks and returns.
 
 | Task | Priority | Stack | Role |
 |---|---|---|---|
@@ -138,30 +138,57 @@ Files with "wroom" in their name target ESP32-WROOM-32 DevKit (MCU #3, ESP-IDF).
 
 ## OLED Library
 `oled_display_wroom` — WROOM-specific, pure ESP-IDF implementation.
-Uses U8g2 in HAL-callback mode (no Arduino layer):
-- `i2c_new_master_bus()` + `i2c_master_transmit()` for I2C_NUM_1
-- Two callbacks provided to U8g2: `u8x8_byte_i2c_cb` and `u8x8_gpio_delay_cb`
-- No `u8g2-hal-esp-idf` community library — written from scratch using
-  the new IDF master API (avoids deprecated `i2c_driver_install()`)
+Uses u8g2 C API + u8g2-hal-esp-idf community HAL for I2C transport:
+- HAL owns I2C_NUM_1 exclusively via legacy i2c driver (driver/i2c.h)
+- `u8g2_esp32_hal_init()` configures GPIO16/17, calls `i2c_driver_install()`
+- `u8g2_esp32_i2c_byte_cb` and `u8g2_esp32_gpio_and_delay_cb` passed to u8g2 setup
+- Full framebuffer mode (_f suffix) — entire frame built in RAM, pushed in one transfer
+- I2C address 0x3C left-shifted to 0x78 per u8g2 convention
+
+HAL constraints (acceptable for Phase 2):
+- Bus speed hardcoded to 50kHz in u8g2-hal-esp-idf
+- Uses deprecated legacy I2C API — safe in IDF 5.4.0 as long as no other
+  code uses i2c_new_master_bus() on I2C_NUM_1 simultaneously
+
+extern "C" required: u8g2_esp32_hal.h is a C header included from C++ code.
+Wrap with #ifdef __cplusplus / extern "C" guards in oled_display_wroom.h.
+
+Components live in code/components/ (shared across all espidf projects):
+- u8g2-hal-esp-idf  (git clone mkfrey/u8g2-hal-esp-idf)
+- u8g2              (git clone olikraus/u8g2)
+Referenced via EXTRA_COMPONENT_DIRS = "../components" in root CMakeLists.txt.
 
 ## Build System
-Under `framework = espidf`, PlatformIO uses CMake (the native IDF build system).
-Required files (not generated — must be created and maintained):
-- `CMakeLists.txt` (project root): `cmake_minimum_required`, IDF include, `project()`
-- `main/CMakeLists.txt`: lists source files via `idf_component_register()`
+Under `framework = espidf`, PlatformIO uses CMake.
+Required files:
+- `CMakeLists.txt` (project root): sets EXTRA_COMPONENT_DIRS to src/ and
+  ../components (shared repo-level components), includes IDF cmake, declares project name
+- `src/CMakeLists.txt`: lists source files via `idf_component_register()`
+  with REQUIRES for esp_common, log, freertos, driver, u8g2-hal-esp-idf.
+  Also registers oled_display_wroom.cpp from shared/libs/oled_display/ and
+  adds shared/libs/oled_display/ to INCLUDE_DIRS.
 - `sdkconfig.defaults`: hand-maintained overrides (committed to VCS)
   - `CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y`
-  - `CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096` (or larger if needed)
-- `sdkconfig`: generated by IDF from sdkconfig.defaults + defaults — do NOT commit
+  - `CONFIG_LOG_DEFAULT_LEVEL_INFO=y`
+- `sdkconfig`: generated — do NOT commit
+- `managed_components/`, `dependencies.lock`: generated — do NOT commit
 
-The `managed_components/` directory and `dependencies.lock` are generated
-by the IDF Component Manager and should not be committed.
+External components (code/components/ — shared across all espidf projects):
+- `u8g2`              — git clone olikraus/u8g2
+- `u8g2-hal-esp-idf`  — git clone mkfrey/u8g2-hal-esp-idf
 
 ## Logic Flow
 ```
-app_main() initializes peripherals, creates tasks, returns.
+app_main():
+  uart_init()
+  uart_handshake()   — blocks until RPi sends PING, MCU sends PONG
+  [Phase 2+: oled_init()]
+  [Phase 3+: sharedBus.init()]
+  xTaskCreate() × 4
+  return
 
-Receiver calls sharedBus.poll() → blocks on semaphore → ISR fires on message → puts on inboundQueue
+Receiver calls sharedBus.poll() → blocks on semaphore → ISR fires on
+message → puts on inboundQueue
 
 Logic wakes on inboundQueue:
 
@@ -186,7 +213,7 @@ Logic wakes on inboundQueue:
 UART task wakes on uartQueue:
   → serialize request to JSON
   → uart_write_bytes(UART_NUM_1, json)
-  → uart_read_bytes() with 500ms timeout
+  → uart_read_line() with 500ms timeout
   → put UartResult on uartResultQueue
 
 OLED task wakes every 500ms:
@@ -216,16 +243,16 @@ Last: 12345678
 
 ## Critical Notes
 - Do NOT call vTaskStartScheduler() — IDF starts FreeRTOS before app_main()
-- app_main() should create tasks then return (or block indefinitely) —
-  there is no loop() equivalent; the loopTask does not exist under espidf
-- sharedBus.init() and oled.init() must be called before xTaskCreate()
+- app_main() creates tasks then returns — no loop() equivalent under espidf
+- uart_handshake() must complete before tasks are created — RPi must be
+  running before MCU #3 is reset
 - UART1 (GPIO18/19) is for RPi — UART0 (USB/CP2102) is for debug logging only
-- RPi must be booted before MCU #3 starts — UART timeout handles RPi-down gracefully
 - Disconnect shared bus wires before flashing — bus activity during flash corrupts firmware
 - GPIO8/9 availability must be verified on any future board replacement —
   these are crystal pins on some boards (LOLIN32 Lite) and unavailable
-- Under espidf, ESP_LOGI/ESP_LOGW replace Serial.print for debug output
-- monitor_speed = 921600 — do not change
+- Under espidf, ESP_LOGI/ESP_LOGW/ESP_LOGE replace Serial.print
+- monitor_speed = 115200 — IDF 5.4.0 console default, no override needed
 - IDF 6.0 (espressif32 @ 7.0.0) removes I2C slave v1 but retains v2 (our API).
-  Upgrading from 6.10.0 to 7.0.0 requires review of other IDF 6.0 breaking changes
-  before proceeding — do not upgrade without a dedicated test session
+  Do not upgrade without a dedicated test session
+- driver/i2c.h (old driver) must not be included once driver/i2c_slave.h is
+  in use — conflict causes build failure

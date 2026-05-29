@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Tell IDF the app component lives in src/ rather than the default main/
-set(EXTRA_COMPONENT_DIRS "src")
+# relative paths for app and components
+set(EXTRA_COMPONENT_DIRS "src" "../components")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

@@ -61,3 +61,14 @@ BusError enum: OK, NOT_FOUND, BUS_FAULT, TIMEOUT — maps endTransmission() code
 - Every new shared library needs a library.json file
 - lib_extra_dirs = ../shared/libs covers all libraries under shared/libs automatically
 - shared_config.h included via build_flags = -I ../shared/config (not lib_extra_dirs)
+
+## Known Bugs / Confirmed Fixes
+- u8g2-hal-esp-idf is a C library — including u8g2_esp32_hal.h from C++ causes
+  linker failure ("undefined reference" with mangled symbol names). Fix: wrap
+  include in extern "C" guards in oled_display_wroom.h
+- u8g2-hal-esp-idf hardcodes I2C bus speed to 50kHz and uses legacy i2c driver
+  (driver/i2c.h) on I2C_NUM_1 — safe in IDF 5.4.0 as long as no other code
+  uses i2c_new_master_bus() on I2C_NUM_1
+- u8g2 I2C address must be left-shifted by 1: 0x3C → 0x78 in u8x8_SetI2CAddress()
+
+NEEDS WROOM ADDITION!!!

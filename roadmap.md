@@ -74,68 +74,68 @@ scheduling, mutexes protect bus access.
 > to Raspberry Pi 3B+ over UART. See ADR-009 and raspi-db-server/CLAUDE.md.
 >
 > MCU #3 Arduino I2C slave initialization caused TG1WDT on all attempted
-> paths (Wire.begin() slave mode, i2c_driver_install() slave mode). Root
-> cause: arduino-esp32 creates an internal task at priority 20 for I2C
-> slave, starving IDLE1 on the dual-core WROOM. Further, arduino-esp32 3.x
-> auto-initializes Wire on GPIO8/9 before setup() runs, blocking
-> i2c_new_slave_device() from claiming those pins even under pioarduino.
-> Solution: switch to framework = espidf (pure ESP-IDF, no Arduino layer),
-> which eliminates all framework-level GPIO conflicts at the root.
+> paths (Wire.begin() slave mode, i2c_driver_install() slave mode). Further,
+> arduino-esp32 3.x auto-initializes Wire on GPIO8/9 before setup() runs,
+> blocking i2c_new_slave_device() from claiming those pins even under
+> pioarduino. Solution: switch to framework = espidf (pure ESP-IDF, no
+> Arduino layer), which eliminates all framework-level GPIO conflicts at root.
 > See ADR-010 for full investigation and decision chain.
 
 - [x] MCU #3: ESP32-WROOM-32 DevKit confirmed on /dev/ttyUSB0, OLED working
 - [x] RPi: OS installed, hardware UART freed from Bluetooth, SSH confirmed
 - [x] RPi: UART echo server confirmed on ttyAMA0 (GPIO14/15)
-- [x] MCU #3: UART loopback confirmed (GPIO18→GPIO19) — Serial2 round-trip
-- [x] MCU #3 + RPi: UART echo round-trip confirmed (MCU sends, RPi echoes back)
+- [x] MCU #3: UART loopback confirmed (GPIO18→GPIO19)
+- [x] MCU #3 + RPi: UART echo round-trip confirmed (Arduino era)
 
 **MCU #3 — Phase 0: ESP-IDF Project Skeleton**
-> Framework: espressif32 @ 6.10.0 (IDF 5.4), framework = espidf.
+> Framework: espressif32 @ 6.10.0 (IDF 5.4.0), framework = espidf.
 > No Arduino layer. app_main() replaces setup()/loop().
 > ESP_LOGI replaces Serial. vTaskDelay replaces delay().
+> monitor_speed = 115200 (IDF console default — 921600 was Arduino-specific).
 
-- [ ] 0.1 Bare espidf project — boots, logs "MCU3 boot OK" via ESP_LOGI at 921600
-      DoD: visible in monitor, no WDT, no crash, IDF version visible in boot log
-- [ ] 0.2 Confirm sdkconfig.defaults — CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y
-      and any other required keys compile and boot cleanly
+- [x] 0.1 Bare espidf project — boots, logs IDF version + I2C address, no WDT
+- [x] 0.2 sdkconfig.defaults confirmed — CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y
+      compiles and boots cleanly
 
 **MCU #3 — Phase 1: UART to RPi**
-> uart_driver_install() on UART1, GPIO18/19. Simplest interface first —
-> gives a working debug channel before I2C complexity starts.
+> uart_driver_install() on UART1, GPIO18/19, 115200 baud.
+> Handshake: RPi sends PING, MCU responds PONG (one-time at boot).
+> Echo test confirms bidirectional data flow before moving to JSON protocol.
 
-- [ ] 1.1 UART1 init — hardcoded JSON request sent to RPi, response logged
-      DoD: RPi running db_server.py, MCU sends {"op":"read","ac":"12345678"},
-      valid JSON response logged via ESP_LOGI
-- [ ] 1.2 Timeout path — RPi-down returns after 500ms, TIMEOUT logged
-      DoD: RPi powered off, MCU logs TIMEOUT within 500ms, no hang
+- [x] 1.1 UART1 init + handshake — RPi sends PING, MCU responds PONG, logged
+- [x] 1.2 Echo test — MCU sends "hello from mcu3", RPi echoes back, PASS logged
+- [~] 1.3 Timeout path — superseded by Phase 5.5 (UART task timeout, 500ms
+      production path). uart_read_line() timeout confirmed working in handshake
+      context (RPi-down loop observed in serial log).
 
 **MCU #3 — Phase 2: OLED**
-> U8g2 in HAL-callback mode. I2C_NUM_1 hardware master on GPIO16/17.
-> New IDF master API (i2c_new_master_bus / i2c_master_transmit) — no
-> deprecated i2c_driver_install().
+> U8g2 in HAL-callback mode via u8g2-hal-esp-idf community HAL.
+> I2C_NUM_1 hardware master on GPIO16/17, legacy i2c driver (driver/i2c.h).
+> HAL hardcodes 50kHz bus speed — acceptable for 500ms-refresh display.
+> oled_display_wroom written as C++ wrapper around u8g2 C API + hal callbacks.
+> extern "C" required around u8g2_esp32_hal.h — hal is C, not C++.
 
-- [ ] 2.1 U8g2 HAL callbacks — i2c_byte_cb and gpio_delay_cb written for IDF
-      DoD: OLED shows static "MCU3 BOOT" text, persists across resets
+- [x] 2.1 U8g2 HAL callbacks — i2c_byte_cb and gpio_delay_cb wired via
+      u8g2-hal-esp-idf. OLED shows static "DATABASE CTRL / Addr: 0x0A /
+      Phase 2.1 / BOOT OK", persists across resets.
 - [ ] 2.2 OLED task at priority 1, 500ms refresh, static content
       DoD: 60-second soak, no crash, OLED continuously updating
 
 **MCU #3 — Phase 3: Shared Bus I2C Slave**
 > Core objective. i2c_new_slave_device() on I2C_NUM_0 / GPIO8/9.
 > No Arduino Wire anywhere — GPIO matrix conflict eliminated at root.
+> shared_bus_wroom written from scratch — no Arduino dependencies.
 
 - [ ] 3.1 i2c_new_slave_device() init — slave at 0x0A on GPIO8/9
-      DoD: no "GPIO 8/9 is not usable" warning in boot log, no WDT,
-      boot log shows slave init OK
-- [ ] 3.2 Receive via ISR callback — raw bytes from MCU #1 printed via ESP_LOGI
-      DoD: MCU #1 sends HEARTBEAT to 0x0A, MCU #3 logs raw bytes received
-- [ ] 3.3 Send response — i2c_slave_write() ACK pre-loaded, read by MCU #1
+      DoD: no "GPIO 8/9 is not usable" warning, no WDT, slave init OK in log
+- [ ] 3.2 Receive via ISR callback — raw bytes from MCU #1 logged
+      DoD: MCU #1 sends HEARTBEAT to 0x0A, MCU #3 logs bytes received
+- [ ] 3.3 Send response — i2c_slave_write() ACK confirmed by MCU #1
       DoD: MCU #1 log shows ACK received from 0x0A
 - [ ] 3.4 Wrap into shared_bus_wroom library — init()/send()/poll() interface
-      DoD: same API as shared_bus (ESP32-C3 version), confirmed by code review
+      DoD: same API as shared_bus (ESP32-C3 version)
 
 **MCU #3 — Phase 4: FreeRTOS Task Architecture**
-> Wire all four tasks with three queues. Logic task routes messages.
-
 - [ ] 4.1 Receiver + Logic tasks — HEARTBEAT ACK on 5-MCU bus;
       DB_READ/DB_WRITE stubbed (log only)
       DoD: MCU #1 OLED shows MCU #3 alive in heartbeat health display
@@ -143,8 +143,6 @@ scheduling, mutexes protect bus access.
       DoD: live read/write counters visible on OLED during bus activity
 
 **MCU #3 — Phase 5: Full Integration**
-> Wire UART task into queue flow. End-to-end DB operations.
-
 - [ ] 5.1 UART task skeleton — uart_driver_install in task context, loopback confirmed
 - [ ] 5.2 Logic → UART queue wiring — uartQueue/uartResultQueue, 500ms timeout fires
 - [ ] 5.3 DB_READ end-to-end — MCU #2 receives correct balance from SQLite via RPi
@@ -173,17 +171,13 @@ scheduling, mutexes protect bus access.
 
 ## Phase 4 — Integration and Production Implementations
 
-> Replace Phase 3 simple implementations with production-grade designs.
-> The surrounding task/queue structure is unchanged — only logic internals
-> are replaced. All Phase 3 code is scaffold, not throwaway.
-
-- [ ] MCU #2: replace sequential logic with state machine (Option B) — enables concurrent transactions
+- [ ] MCU #2: replace sequential logic with state machine (Option B)
 - [ ] MCU #4: replace immediate dispatch with priority queue — HIGH/MEDIUM/LOW ordering
 - [ ] MCU #5: expand pending request table to 4 slots (from 1)
 - [x] Heartbeat and health monitoring — MCU #1 flags non-responding subsystems on OLED
 - [ ] Single retry on BusError::NOT_FOUND before reporting failure
-- [ ] Full banking scenarios verified on real hardware (deposit, withdrawal, balance, insufficient funds)
-- [ ] MCU #1: WiFi web dashboard (replaces serial monitor for operator commands)
+- [ ] Full banking scenarios verified on real hardware
+- [ ] MCU #1: WiFi web dashboard
 - [ ] RTC timestamps on all transaction log entries (DS1307 on MCU #1)
 
 ---
@@ -192,13 +186,11 @@ scheduling, mutexes protect bus access.
 
 - [ ] Atomic TRANSFER transactions (two-phase commit across MCU #2 and MCU #3)
 - [ ] Crash recovery — MCU #3 RPi replays PENDING transactions from SQLite log on boot
-- [ ] Storage redundancy — rsync SQLite to dev PC already in place (Phase 3); consider
-      periodic backup to USB stick on RPi for fully offline redundancy. No additional
-      hardware required for basic redundancy.
+- [ ] Storage redundancy — periodic backup to USB stick on RPi
 - [ ] Load testing — 50 sequential transactions without dropping
-- [ ] Failure simulation — physically disconnect a subsystem, observe timeout and error propagation
+- [ ] Failure simulation — physically disconnect a subsystem, observe timeout propagation
 - [ ] Priority job scheduling stress test — mixed HIGH/MEDIUM/LOW queue under load
-- [ ] Binary message protocol — replace JSON with compact binary format for performance comparison
-- [ ] USB-to-I2C PC dispatcher *(in consideration)* — connect PC directly to shared bus via CH341/MCP2221 adapter for automated test injection and scripted transaction sequences
+- [ ] Binary message protocol — replace JSON with compact binary format
+- [ ] USB-to-I2C PC dispatcher *(in consideration)*
 - [ ] MCU #1 serial console account management — create/delete accounts at runtime
 - [ ] Account balance limits and overdraft rules

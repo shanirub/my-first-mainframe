@@ -50,7 +50,7 @@ All in code/shared/libs/ — picked up automatically via lib_extra_dirs = ../sha
 
 | Library | Purpose |
 |---------|---------|
-| oled_display | U8g2 SW_I2C wrapper: begin(), showStatus(), showError() |
+| oled_display | U8g2 SW_I2C wrapper for ESP32-C3 (Arduino): begin(), showStatus(), showError(). MCU #3 uses oled_display_wroom — u8g2 C API + u8g2-hal-esp-idf on I2C_NUM_1 (hardware, legacy driver) |
 | shared_bus | TwoWire(0) abstraction: init(), send(), poll() — FreeRTOS task-safe |
 | message_protocol | JSON envelope builder, schema validation, constants |
 
@@ -104,6 +104,9 @@ Units are bytes (ESP32 xTaskCreate takes bytes, not words):
 - ESP32-C3 SuperMini GPIO4–7 are JTAG reserved
 - SD.h file paths require leading slash: "/accounts.json" not "accounts.json"
 - FAT32 volumes over 32GB are unreliable with Arduino SD.h — use ≤8GB partition
+- arduino-esp32 3.x auto-initializes Wire on GPIO8/9 before setup() — blocks i2c_new_slave_device(). Fix: framework = espidf (ADR-010)
+- u8g2-hal-esp-idf hardcodes I2C bus speed to 50kHz and uses legacy i2c driver (driver/i2c.h) on I2C_NUM_1 — safe in IDF 5.4.0 as long as no other code uses i2c_new_master_bus() on I2C_NUM_1
+- u8g2 I2C address must be left-shifted by 1: 0x3C → 0x78 in u8x8_SetI2CAddress()
 
 ## Current Architecture Status
 Phase 3 in progress (2026-04-16).
@@ -118,9 +121,11 @@ Phase 3 in progress (2026-04-16).
 - MCU #3 migrated to ESP32 DevKit — board soldered, wired, recognized on /dev/ttyUSB0
 
 **What needs doing next:**
-- MCU #3: flash SD init test on ESP32 DevKit
-- MCU #3: migrate FreeRTOS skeleton to new board
-- MCU #3: implement SD task and DB_READ/DB_WRITE logic
+- MCU #3: Phase 2.1 — OLED smoke test (static text on screen)
+- MCU #3: Phase 3 — I2C slave init on GPIO8/9 (shared bus)
+- MCU #3: Phase 4 — FreeRTOS task architecture
+- MCU #3: Phase 5 — DB_READ/DB_WRITE end-to-end via RPi UART
+- MCUs #2, #4, #5: subsystem logic (see roadmap.md for details)
 
 ## Key Design Decisions for Phase 3
 - MCU #2: sequential transaction handling (one at a time) — state machine deferred to Phase 4
