@@ -7,3 +7,12 @@ CONFIG_I2C_ENABLE_SLAVE_DRIVER_VERSION_2=y
 
 # Log level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# get backtrace from wdt
+CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y
+
+# disable wdt during debug session
+CONFIG_ESP_TASK_WDT_INIT=n
+
+#  force single-core mode to get panic output
+CONFIG_FREERTOS_UNICORE=y

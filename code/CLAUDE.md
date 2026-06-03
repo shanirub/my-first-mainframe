@@ -142,3 +142,21 @@ Phase 3 in progress (2026-04-16).
 ## Git Hook
 scripts/claude_memory_sync.py — post-commit, fires on CLAUDE.md changes.
 Summarization works. Memory write pending proper context-management API implementation.
+
+## Preferences
+- Never assume — always ask if a fact is missing
+- Verify all API symbols via mcp-api-doc before writing code
+- State assumptions explicitly, flag uncertainty
+- Architecture decisions: present at least two options with reasoning
+- Debugging: list plausible causes with probability, propose targeted tests
+- This is a learning project — use professional terms with brief inline explanations
+- Never use a value, address, or path from a previous test run as an example
+  in a new instruction without explicitly stating which run it came from
+- Never assume a file path exists — if a path is inferred or guessed, say so
+  explicitly before asking the user to run a command against it
+- Never state a hypothesis mid-response and retract it in the same response —
+  form the complete thought before stating it
+- Never move to a new investigation step without first explicitly stating what
+  conclusion the previous step reached and why the next step follows from it
+- When a config change is made, always verify it took effect by checking the
+  compile timestamp in the boot log before interpreting new results

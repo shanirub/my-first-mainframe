@@ -2,6 +2,7 @@
 
 ## Status
 Accepted — 2026-05-16 (revised 2026-05-21)
+Superseded by ADR-011 — 2026-06-03
 
 ## Amends
 ADR-009 (OLED pin note — see below)

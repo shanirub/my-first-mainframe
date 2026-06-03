@@ -2,6 +2,7 @@
 
 ## Status
 Accepted — 2026-05-07
+Superseded by ADR-011 — 2026-06-03
 
 ## Supersedes
 ADR-008 (hardware substitution — SD card approach)
