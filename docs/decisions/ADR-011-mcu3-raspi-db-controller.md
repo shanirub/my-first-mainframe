@@ -91,14 +91,16 @@ likely reproduce the same debugging spiral in a different form."
 That concern remains valid. However, the comparison has changed. The ESP32
 debugging environment — no working panic output, WDT masking all diagnostics,
 untested driver paths — is maximally opaque. Linux, by contrast, provides
-dmesg, strace, readable error messages, and mature Python I2C libraries.
+dmesg, strace, readable error messages, and mature Python libraries.
 If Linux I2C slave proves difficult, the debugging surface is far more
-transparent. Additionally, software I2C (bit-banging via pigpio or a similar
-library) is a viable fallback on Linux that has no equivalent on the ESP32
-path we were on.
+transparent.
 
-The risk of a new debugging spiral exists. It is accepted as preferable to
-continuing the current one.
+Additionally, the BCM2837 SoC on the RPi 3B+ contains a dedicated BSC
+(Broadcom Serial Controller) slave peripheral, accessible via the pigpio
+library's `bsc_i2c()` function. This is hardware-backed slave support —
+not bit-banging — and has confirmed working reports on RPi 3 hardware
+communicating with Arduino masters. The risk of a new debugging spiral
+exists and is accepted as preferable to continuing the current one.
 
 ---
 
@@ -108,64 +110,271 @@ The Raspberry Pi 3B+ replaces MCU #3 (ESP32-WROOM-32) entirely on the
 shared inter-MCU I2C bus. The RPi joins the bus at address 0x0A and takes
 over the Database Controller role directly.
 
-The ESP32-WROOM-32 DevKit is retired from this project and returned to stock.
-It may be reused in a future project.
+The ESP32-WROOM-32 DevKit is retired from this project. See ADR-008 for
+its hardware history.
 
-The UART link between MCU #3 and the RPi (ADR-009) is no longer needed —
-the RPi owns both the I2C slave role and the SQLite storage directly.
+The UART link between MCU #3 and the RPi (ADR-009) is no longer needed.
+Existing UART wiring (RPi GPIO14/15) should be removed after the new
+I2C wiring is confirmed working.
 
 All other MCUs (#1, #2, #4, #5) are unaffected. They continue to send
-DB_READ and DB_WRITE to address 0x0A and receive DB_READ_RESULT and
-DB_WRITE_ACK in return. The change is invisible to the rest of the bus.
+DB_READ and DB_WRITE to address 0x0A and receive results in return.
+The change is invisible to the rest of the bus.
+
+---
+
+## Hardware
+
+### RPi I2C slave (shared bus)
+
+The BCM2837 BSC slave peripheral is hardwired to GPIO18 (SDA) and GPIO19
+(SCL) — these pin assignments are fixed in silicon and cannot be changed
+in software. The RPi connects to the shared bus hub via these two pins.
+
+```
+Shared bus hub (SDA/SCL rails)
+    │
+    ├── MCU #1  GPIO8/9   (existing)
+    ├── MCU #2  GPIO8/9   (existing)
+    ├── MCU #4  GPIO8/9   (existing)
+    ├── MCU #5  GPIO8/9   (existing)
+    └── RPi     GPIO18/19 (BSC slave — new)
+
+Pull-ups: existing 5kΩ on hub SDA and SCL — unchanged.
+Voltage: RPi GPIO18/19 are 3.3V — matches ESP32-C3. No level shifting needed.
+```
+
+### RPi OLED (private display)
+
+A plain SSD1306 128×64 OLED connects to the RPi via the BSC1 master
+peripheral on GPIO2 (SDA) and GPIO3 (SCL). This is a separate wire pair
+from the shared bus and does not connect to the hub.
+
+```
+RPi GPIO2/3 → SSD1306 OLED (private, not on shared bus hub)
+```
+
+GPIO18/19 (BSC slave) and GPIO2/3 (BSC1 master) are two separate hardware
+peripherals on the BCM2837. They do not interfere with each other.
+
+---
+
+## Protocol
+
+### Why the RPi never needs to initiate
+
+In the existing SharedBus design, MCUs switch between slave (listening) and
+master (sending) roles at runtime. When a slave MCU responds to a message,
+it temporarily becomes the bus master, addresses the target, and pushes
+the response.
+
+The RPi does not need this pattern. Every message the RPi sends is a
+response to a prior request from an MCU. The I2C protocol supports this
+without the RPi ever generating a START condition: the requesting MCU
+remains master for the entire exchange, using a master-read transaction
+to clock out the RPi's response from the BSC slave TX FIFO.
+
+This means the RPi operates as a pure I2C slave throughout. The BSC slave
+peripheral is sufficient — no master role is needed on the shared bus.
+
+### Request-response flow
+
+Every RPi interaction follows this two-transaction pattern:
+
+```
+MCU (master write):   START → addr 0x0A + W → payload bytes → STOP
+                      [RPi processes request, loads response into TX FIFO]
+MCU (master read):    START → addr 0x0A + R → clocks out 256 bytes → STOP
+```
+
+The MCU drives SCL for both transactions. The RPi drives SDA only during
+the read transaction, from its TX FIFO.
+
+### Readiness signalling
+
+The RPi cannot pause the master's read clock. If the TX FIFO is not yet
+loaded when the MCU issues the read, the BSC slave returns 0xFF bytes.
+To avoid this, a 1-byte ready flag precedes all responses:
+
+- `0x00` — not ready, try again
+- `0x01` — response follows in bytes 1–255
+
+The MCU polls `requestFrom(0x0A, 256)` in a loop with short delays until
+byte[0] == 0x01 or the 500ms timeout elapses. On timeout, the MCU returns
+`Status::TIMEOUT` to the caller, consistent with existing error handling.
+
+The MCU always reads exactly 256 bytes — the maximum I2C buffer size
+already used throughout the system. Trailing bytes beyond the JSON payload
+are ignored by the parser.
+
+### DB_READ flow
+
+```
+MCU #2                              RPi (pigpio BSC slave, GPIO18/19)
+  │                                         │
+  │── send(0x0A, DB_READ) ─────────────────►│  write transaction
+  │                                         │  pigpio EVENT_BSC fires
+  │                                         │  parse request
+  │                                         │  query SQLite (Phase 4+)
+  │                                         │  load DB_READ_RESULT into TX FIFO
+  │                                         │  set ready_byte = 0x01
+  │                                         │
+  │  ┌── poll loop (500ms timeout) ─────────┤
+  │  │  requestFrom(0x0A, 256) ────────────►│  read transaction
+  │  │  check byte[0]                       │  RPi drives SDA from TX FIFO
+  │  │  0x00 → vTaskDelay(10ms), retry      │
+  │  │  0x01 → break                        │
+  │  └──────────────────────────────────────┘
+  │                                         │
+  │  parse bytes[1..255] → DB_READ_RESULT   │
+  │  [timeout → Status::TIMEOUT]            │
+```
+
+### DB_WRITE flow
+
+```
+MCU #2                              RPi
+  │                                         │
+  │── send(0x0A, DB_WRITE) ────────────────►│  write transaction
+  │                                         │  write WAL entry (PENDING)
+  │                                         │  update balance
+  │                                         │  mark COMMITTED
+  │                                         │  load DB_WRITE_ACK into TX FIFO
+  │                                         │  set ready_byte = 0x01
+  │                                         │
+  │  ┌── poll loop (500ms timeout) ─────────┤
+  │  │  requestFrom(0x0A, 256) ────────────►│
+  │  │  check byte[0] → break on 0x01       │
+  │  └──────────────────────────────────────┘
+  │                                         │
+  │  parse bytes[1..255] → DB_WRITE_ACK     │
+```
+
+### HEARTBEAT flow
+
+```
+MCU #1                              RPi
+  │                                         │
+  │── send(0x0A, HEARTBEAT) ───────────────►│  write transaction
+  │                                         │  load HEARTBEAT_ACK into TX FIFO
+  │                                         │  set ready_byte = 0x01
+  │                                         │  (no SQLite — fixed response)
+  │                                         │
+  │  vTaskDelay(20ms)                       │  [fixed delay: no SQLite latency]
+  │  requestFrom(0x0A, 256) ───────────────►│
+  │  parse bytes[1..255] → HEARTBEAT_ACK    │
+```
+
+HEARTBEAT_ACK requires no database query. A fixed 20ms delay before the
+single read attempt is sufficient to cover pigpio callback latency.
+No polling loop is needed.
+
+---
+
+## MCU firmware changes required
+
+### New SharedBus method: sendAndReceive()
+
+```cpp
+// Sends a message to target, then polls requestFrom() until the ready
+// byte (byte[0]) == 0x01 or timeoutMs elapses. On success, reads exactly
+// 256 bytes into rxBuf. Returns Status::OK or Status::TIMEOUT.
+//
+// busMutex is held across the full send + poll sequence — no other task
+// can interleave a bus operation between the write and read transactions.
+uint8_t sendAndReceive(uint8_t target,
+                       const char* txMsg,
+                       char* rxBuf,
+                       uint32_t timeoutMs = 500);
+```
+
+Required on: MCU #2 (DB_READ, DB_WRITE), MCU #1 (HEARTBEAT).
+
+MCU #2 logic task replaces the pattern:
+```
+send(DB_READ) → block on inboundQueue waiting for DB_READ_RESULT
+```
+with:
+```
+sendAndReceive(DB_READ, rxBuf) → parse rxBuf directly
+```
+
+The inboundQueue path (poll → receive pushed result) is not used for
+RPi interactions. The RPi never pushes — it only responds to reads.
+
+---
+
+## RPi software architecture
+
+See `docs/design/raspi_architecture.md` for the full thread design.
+
+Summary: three Python threads (bus_worker, oled_worker, flask — Phase 4+)
+communicating via `queue.Queue` and `threading.Lock`, mirroring the
+FreeRTOS task + queue pattern used on the MCUs. The pigpio EVENT_BSC
+callback is a producer that puts incoming requests onto the bus queue;
+the bus_worker thread owns all SQLite access and TX FIFO loading.
+
+---
+
+## Repo structure
+
+```
+code/
+  raspi-db-server/
+    CLAUDE.md           — RPi setup steps, design notes, DoD per phase
+    src/
+      bus_slave.py      — pigpio bsc_i2c setup, EVENT_BSC callback, TX FIFO protocol
+      db.py             — SQLite read/write, WAL mode (Phase 4+)
+      web_server.py     — Flask transaction history at :5000 (Phase 4+)
+      oled.py           — luma.oled SSD1306 driver on GPIO2/3
+    schema/
+      schema.sql        — accounts + transactions tables (Phase 4+)
+```
 
 ---
 
 ## What is decided
 
 - RPi 3B+ is the Database Controller at I2C address 0x0A
-- RPi owns SQLite storage and Flask web interface directly (no UART proxy)
-- ESP32-WROOM-32 DevKit is retired from the project
-- The shared bus address 0x0A is preserved — no changes to other MCUs
+- RPi connects to shared bus via GPIO18/19 (BSC slave, pigpio bsc_i2c)
+- RPi OLED connects via GPIO2/3 (BSC1 master, separate from shared bus)
+- RPi owns SQLite storage and Flask web interface directly (Phase 4+)
+- ESP32-WROOM-32 DevKit is retired — see ADR-008 for hardware history
+- Shared bus address 0x0A is preserved — no changes to other MCUs
+- sendAndReceive() added to SharedBus for MCU #1 and MCU #2
 
-## What is deferred to the next session
+## What is deferred
 
-The following require research and a dedicated design session before any
-hardware changes or code is written:
-
-- Which RPi GPIO pins connect to the shared bus SDA/SCL
-- Whether to use kernel I2C slave driver or software I2C (pigpio or similar)
-- Whether the RPi OLED (if retained) conflicts with the shared bus I2C pins
-- Python library selection and I2C slave implementation approach
-- Revised roadmap entries for MCU #3 phases 3–6
-
-No hardware should be rewired and no code should be written until the
-design session produces a verified plan.
+- SQLite implementation (db.py) — Phase 4
+- Flask web interface (web_server.py) — Phase 4
+- Crash recovery (PENDING transaction replay) — Phase 5
+- rsync backup to dev PC — Phase 4
 
 ---
 
 ## Impact on existing documents
 
-- ADR-009: superseded by this ADR. The UART protocol design it contains
-  is void — the UART link no longer exists.
-- ADR-010: superseded by this ADR. The pure ESP-IDF framework decision
-  and shared_bus_wroom implementation are void.
-- roadmap.md: MCU #3 phases 3.1–6 are on hold pending the design session.
-- requirements.md: no functional requirements change — DB_READ, DB_WRITE,
-  and web interface are still required, now delivered by RPi directly.
-- shared_config.h: no changes — bus address 0x0A and GPIO8/9 pin constants
-  are unchanged.
+- ADR-009: superseded. UART protocol and wiring are void.
+- ADR-010: superseded. ESP-IDF framework decision and shared_bus_wroom
+  implementation are inactive. Code preserved in repo for reference.
+- roadmap.md: MCU #3 phases replaced per this ADR.
+- requirements.md: no functional requirement changes.
+- shared_config.h: no changes — bus address 0x0A unchanged.
+- CLAUDE.md (MCU #3): retired entry. RPi has its own CLAUDE.md.
 
 ---
 
 ## Consequences
 
 - MCU #3 firmware (shared_bus_wroom, oled_display_wroom, main.cpp) is
-  preserved in the repo but inactive. Do not delete — it documents the
+  preserved in the repo but inactive. Do not delete — documents the
   investigation and may be referenced in future sessions.
-- The UART link hardware (GPIO18/19 on MCU #3, GPIO14/15 on RPi) is
-  no longer needed and can be unwired after the new RPi design is confirmed.
-- RPi now has two hardware responsibilities: I2C slave on shared bus, and
-  SQLite + Flask. Both run on the same device — this is simpler than the
-  MCU #3 + RPi split, not more complex.
-- Phase 5 UART task items in the roadmap (5.1–5.5) are obsolete and should
-  be removed or replaced in the next roadmap update.
+- UART wiring (RPi GPIO14/15 ↔ former MCU #3 GPIO18/19) should be
+  removed after new I2C wiring is confirmed working.
+- RPi now has two hardware responsibilities: I2C slave on shared bus
+  (GPIO18/19), and SSD1306 OLED (GPIO2/3). Both on the same device —
+  simpler than the MCU #3 + RPi split, not more complex.
+- MCU #2 and MCU #1 logic tasks require minor changes to use
+  sendAndReceive() instead of send() + poll() for RPi interactions.
+- RPi must be booted before MCU #1 and MCU #2 start processing —
+  both handle RPi-down gracefully via the 500ms timeout.
