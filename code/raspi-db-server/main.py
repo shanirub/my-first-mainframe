@@ -1,81 +1,59 @@
 #!/usr/bin/env python3
 """
-Phase 3.1 smoke test — BSC slave init on GPIO18/19.
+Phase 3.2 smoke test — OLED static text via luma.oled.
 
 What this tests:
-  1. pigpio daemon is reachable (pigpio.pi() connects)
-  2. bsc_i2c(0x0A) arms the BSC slave without error
-  3. clear_tx_fifo loads NOT_READY + zeros into TX FIFO without error
+  1. luma.core can open the I2C serial interface on /dev/i2c-1 (GPIO2/3)
+  2. ssd1306 device initializes without error
+  3. Static text renders and stays visible on the display
 
 What it does NOT test:
   - Any bus traffic from MCUs
-  - EVENT_BSC callback
-  - Any other thread
+  - display_state / display_lock (that's Phase 3.8, live updates)
+  - Any interaction with bus_worker
 
-DoD for 3.1: all three steps print OK, no exception raised.
+DoD for 3.2: "DATABASE CTRL / Addr: 0x0A" visible on the SSD1306, no exception raised.
+
+UNVERIFIED — flagged explicitly:
+  - luma.core.interface.serial.i2c(port=1, address=0x3C) parameter names are
+    assumed, not confirmed against source. If this raises a TypeError, the
+    constructor signature differs and we need to check
+    luma/core/interface/serial.py directly.
+  - SSD1306 I2C address assumed 0x3C (the standard default for this module).
+    If wrong, the display will likely throw an I/O error on init.
 """
 
-import pigpio
-import time
+from luma.core.interface.serial import i2c
+from luma.core.render import canvas
+from luma.oled.device import ssd1306
 
-I2C_ADDR  = 0x0A
-NOT_READY = b'\x00'
+# Assumption: port=1 maps to /dev/i2c-1 (GPIO2/3, BSC1 master) — matches
+# architecture doc. address=0x3C is the standard SSD1306 default.
+I2C_PORT    = 1
+OLED_ADDR   = 0x3C
 
 def main():
-    # Step 1 — connect to pigpio daemon
-    # Assumption: pigpiod is running locally, no-args constructor connects to 127.0.0.1:8888
-    print("Connecting to pigpio daemon...")
-    pi = pigpio.pi()
+    print("Opening I2C serial interface on /dev/i2c-1...")
+    serial = i2c(port=I2C_PORT, address=OLED_ADDR)
+    print("OK: serial interface opened")
 
-    # pi.connected is the standard check — not in index, using attribute access directly.
-    # If the daemon is not running, pigpio.pi() does not raise — it returns a pi object
-    # with pi.connected == False. We must check explicitly.
-    if not pi.connected:
-        print("FAIL: pigpio daemon not reachable. Is pigpiod running?")
-        return
-    print("OK: connected to pigpio daemon")
+    print("Initializing SSD1306 device...")
+    device = ssd1306(serial, width=128, height=64, rotate=0)
+    print("OK: SSD1306 initialized")
 
-    try:
-        # Step 2 — arm BSC slave at 0x0A
-        # bsc_i2c(i2c_address, data): arming with empty data (b'') sets up the slave
-        # without loading anything into the TX FIFO yet.
-        # Return value is a status int — negative means error (pigpio convention).
-        print("Arming BSC slave at 0x0A...")
-        status = pi.bsc_i2c(I2C_ADDR, b'')
-        print(f"  bsc_i2c() returned: {status}")
-        if isinstance(status, int) and status < 0:
-            print(f"FAIL: bsc_i2c returned error code {status}")
-            return
-        print("OK: BSC slave armed")
+    print("Drawing static text...")
+    with canvas(device) as draw:
+        draw.text((0, 0),  "DATABASE CTRL",  fill="white")
+        draw.text((0, 16), "Addr: 0x0A",     fill="white")
+        draw.text((0, 32), "Phase 3.2",      fill="white")
+        draw.text((0, 48), "Smoke Test OK",  fill="white")
+    print("OK: text drawn — check the physical display now")
 
-        # Step 3 — load NOT_READY into TX FIFO
-        # This is clear_tx_fifo() from the architecture doc.
-        # Ensures byte[0] == 0x00 so no MCU reads a stale response.
-        print("Loading NOT_READY into TX FIFO...")
-        buf = NOT_READY + b'\x00' * 255   # exactly 256 bytes
-        status = pi.bsc_i2c(I2C_ADDR, buf)
-        print(f"  bsc_i2c() returned: {status}")
-        if isinstance(status, int) and status < 0:
-            print(f"FAIL: clear_tx_fifo returned error code {status}")
-            return
-        print("OK: TX FIFO cleared (NOT_READY loaded)")
+    print("\n--- Phase 3.2 PASS (pending visual confirmation) ---")
+    print("Holding 15s — verify text is visible on the OLED.")
 
-        print("\n--- Phase 3.1 PASS ---")
-        print("BSC slave is armed at 0x0A. Ready for Phase 3.2.")
-
-        # Hold for 5 seconds so you can observe with logic analyzer if attached
-        print("Holding 5s (attach logic analyzer if needed)...")
-        time.sleep(5)
-
-    finally:
-        # Disarm BSC slave before exit — bsc_i2c(0, b'') with address=0 disarms
-        # (pigpio convention: address 0 = release the peripheral).
-        # Uncertain: disarm convention not verified in index. Flagging explicitly.
-        # If this causes an error, comment it out — it's cleanup only.
-        print("Disarming BSC slave...")
-        pi.bsc_i2c(0, b'')
-        pi.stop()
-        print("OK: pigpio connection closed")
+    import time
+    time.sleep(15)
 
 if __name__ == "__main__":
     main()
